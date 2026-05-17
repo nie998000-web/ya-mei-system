@@ -1,0 +1,1443 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  followMethods,
+  followStatusOptions,
+  issueOptions,
+  levelOptions,
+  makeCustomerStatus,
+  stores as defaultStores,
+} from './data/seedData'
+import { canManage, useCloudData } from './hooks/useCloudData'
+import { normalizeStoreName, validStoreNames } from './lib/mappers'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { daysSince, percent, todayString } from './utils/date'
+import { money } from './utils/format'
+
+const navItems = [
+  ['dashboard', '今日看板'],
+  ['activation', '未到店激活'],
+  ['customers', '顾客档案'],
+  ['followups', '跟进记录'],
+  ['reviews', '每日复盘'],
+  ['employees', '员工管理'],
+]
+
+function isBossRole(role) {
+  const value = String(role || '').trim().toLowerCase()
+  return value === 'boss'
+}
+
+function isBeauticianRole(role) {
+  const value = String(role || '').trim().toLowerCase()
+  return value === 'beautician'
+}
+
+function roleLabel(role) {
+  const labels = {
+    boss: '老板',
+    manager: '店长',
+    beautician: '美容师',
+  }
+  return labels[role] || role || ''
+}
+
+const emptyCustomer = {
+  name: '',
+  phone: '',
+  store: '龙泉1店',
+  owner: '',
+  level: 'B客',
+  lastVisit: todayString(),
+  lastFollowResult: '未联系',
+  nextFollowTime: '',
+  followStatus: '未联系',
+}
+
+const emptyFollowup = {
+  customerId: '',
+  customerName: '',
+  customerPhone: '',
+  store: defaultStores[0],
+  method: '微信',
+  owner: '',
+  content: '',
+  feedback: '',
+  hasAppointment: false,
+  appointmentTime: '',
+  hasDeal: false,
+  dealAmount: 0,
+  nextFollowTime: '',
+  issueType: '没时间',
+}
+
+const emptyReview = {
+  date: todayString(),
+  store: defaultStores[0],
+  targetInvites: 20,
+  wechatCount: 0,
+  phoneCount: 0,
+  appointments: 0,
+  visits: 0,
+  deals: 0,
+  revenue: 0,
+  reason: '',
+  staffIssue: '',
+  rejectReason: '',
+  tomorrowAction: '',
+  summary: '',
+}
+
+const emptyEmployee = {
+  name: '',
+  phone: '',
+  store: defaultStores[0],
+  role: 'beautician',
+  today_followups: 0,
+  today_appointments: 0,
+  today_arrivals: 0,
+  today_deals: 0,
+  today_sales: 0,
+  note: '',
+}
+
+function App() {
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [active, setActive] = useState('dashboard')
+  const cloud = useCloudData(session)
+
+  const enrichedCustomers = useMemo(
+    () =>
+      cloud.customers.map((customer) => {
+        const notVisitedDays = daysSince(customer.lastVisit)
+        return {
+          ...customer,
+          notVisitedDays,
+          status: makeCustomerStatus(notVisitedDays),
+        }
+      }),
+    [cloud.customers],
+  )
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false)
+      return
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      setAuthLoading(false)
+    })
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      setAuthLoading(false)
+    })
+
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  if (!isSupabaseConfigured) return <SetupMissing />
+  if (authLoading) return <LoadingScreen text="正在检查登录状态..." />
+  if (!session) return <LoginPage />
+  if (cloud.loading) return <LoadingScreen text="正在读取云端门店数据..." />
+  if (!cloud.profile) return <AccountBlocked message={cloud.error || '当前账号未配置权限。'} />
+
+  const pageProps = {
+    customers: active === 'customers' ? cloud.customers : enrichedCustomers,
+    employees: cloud.employees,
+    followups: cloud.followups,
+    reviews: cloud.reviews,
+    profile: cloud.profile,
+    role: cloud.role,
+    stores: validStoreNames,
+    customerError: cloud.customerError,
+    followupError: cloud.followupError,
+    employeeError: cloud.employeeError,
+    dailyReviewError: cloud.dailyReviewError,
+    saveCustomer: cloud.saveCustomer,
+    deleteCustomer: cloud.deleteCustomer,
+    updateCustomerStatus: cloud.updateCustomerStatus,
+    saveFollowup: cloud.saveFollowup,
+    deleteFollowup: cloud.deleteFollowup,
+    saveReview: cloud.saveReview,
+    deleteReview: cloud.deleteReview,
+    saveEmployee: cloud.saveEmployee,
+    deleteEmployee: cloud.deleteEmployee,
+    setActive,
+  }
+  const currentRole = cloud.profile?.role || cloud.role
+  const isBossAccount = isBossRole(currentRole)
+  const headerStore = isBossAccount ? '全部门店' : normalizeStoreName(cloud.profile?.store) || validStoreNames[0]
+
+  return (
+    <div className="flex min-h-screen bg-[#fff4f8]">
+      <aside className="fixed left-0 top-0 h-full w-[236px] border-r border-pink-100 bg-white/95 px-4 py-5 shadow-[12px_0_40px_rgba(191,24,92,0.06)]">
+        <div className="mb-8 flex items-center gap-3">
+          <div className="grid h-[52px] w-[52px] place-items-center rounded-full border border-pink-100 bg-white text-center text-sm font-bold leading-4 text-[#c2185b] shadow-sm">
+            雅美<br />靓颜
+          </div>
+          <div>
+            <div className="text-lg font-bold text-[#8d1744]">雅美靓颜</div>
+            <div className="text-xs text-[#a66a82]">门店每日工作台</div>
+          </div>
+        </div>
+        <nav className="space-y-2">
+          {navItems.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setActive(key)}
+              className={`w-full rounded-lg px-4 py-4 text-left text-[15px] font-semibold transition ${
+                active === key
+                  ? 'bg-[#c2185b] text-white shadow-lg shadow-pink-200'
+                  : 'text-[#7c445d] hover:bg-pink-50 hover:text-[#c2185b]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+        <div className="absolute bottom-5 left-4 right-4 rounded-lg bg-pink-50 p-3 text-xs leading-6 text-[#8a4964]">
+          云端自动保存 · 当前角色：{roleLabel(cloud.role)}
+        </div>
+      </aside>
+
+      <main className="ml-[236px] flex-1 px-5 py-5 xl:px-8">
+        <header className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-[#641631]">雅美靓颜门店管理系统</h1>
+            <p className="mt-1 text-sm text-[#9a6078]">先看今日重点，再处理顾客跟进</p>
+          </div>
+          <div className="rounded-full border border-pink-100 bg-white px-5 py-2 text-sm font-semibold text-[#c2185b] shadow-sm">
+            {headerStore} · 今日 {todayString()}
+            <button onClick={() => supabase.auth.signOut()} className="ml-4 text-[#8a4964] hover:text-[#c2185b]">退出</button>
+          </div>
+        </header>
+
+        {cloud.error && (
+          <div className="mb-5 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+            云端部分数据读取失败：{cloud.error}
+            <button onClick={cloud.refresh} className="ml-3 font-bold text-[#c2185b]">重新读取</button>
+          </div>
+        )}
+
+        {active === 'dashboard' && <Dashboard {...pageProps} />}
+        {active === 'customers' && <CustomersModule {...pageProps} />}
+        {active === 'activation' && <ActivationModule {...pageProps} />}
+        {active === 'followups' && <FollowupsModule {...pageProps} />}
+        {active === 'reviews' && <ReviewsModule {...pageProps} />}
+        {active === 'employees' && <EmployeesModule {...pageProps} />}
+      </main>
+    </div>
+  )
+}
+
+function LoginPage() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const login = async (event) => {
+    event.preventDefault()
+    setLoading(true)
+    setMessage('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) setMessage(error.message)
+    setLoading(false)
+  }
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#fff4f8] px-6">
+      <form onSubmit={login} className="w-full max-w-md rounded-lg border border-pink-100 bg-white p-8 shadow-xl shadow-pink-100">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="grid h-[56px] w-[56px] place-items-center rounded-full border border-pink-100 bg-white text-center text-sm font-bold leading-4 text-[#c2185b] shadow-sm">
+            雅美<br />靓颜
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-[#641631]">门店管理系统</h1>
+            <p className="text-sm text-[#9a6078]">老板、店长、美容师账号登录</p>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <Field label="账号邮箱">
+            <Input value={email} onChange={setEmail} placeholder="请输入邮箱" />
+          </Field>
+          <Field label="登录密码">
+            <Input type="password" value={password} onChange={setPassword} placeholder="请输入密码" />
+          </Field>
+          {message && <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{message}</div>}
+          <button disabled={loading} className="w-full rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d] disabled:opacity-60">
+            {loading ? '正在登录...' : '登录系统'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function SetupMissing() {
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#fff4f8] px-6">
+      <div className="max-w-xl rounded-lg border border-pink-100 bg-white p-8 text-[#674158] shadow-xl shadow-pink-100">
+        <h1 className="text-2xl font-bold text-[#641631]">需要配置 Supabase</h1>
+        <p className="mt-3 leading-7">请先在项目根目录创建 `.env.local`，填写 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`，然后重新启动项目。</p>
+      </div>
+    </div>
+  )
+}
+
+function AccountBlocked({ message }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#fff4f8] px-6">
+      <div className="max-w-xl rounded-lg border border-red-100 bg-white p-8 text-[#674158] shadow-xl shadow-pink-100">
+        <h1 className="text-2xl font-bold text-red-700">账号暂不能进入系统</h1>
+        <p className="mt-3 leading-7">{message}</p>
+        <p className="mt-2 text-sm leading-6 text-[#9a6078]">请确认 Supabase profiles 表已为当前登录用户配置 `user_id`、`role`、`store` 和 `name`。</p>
+        <button onClick={() => supabase.auth.signOut()} className="mt-5 rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d]">
+          退出登录
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LoadingScreen({ text }) {
+  return <div className="grid min-h-screen place-items-center bg-[#fff4f8] text-lg font-bold text-[#c2185b]">{text}</div>
+}
+
+function ErrorScreen({ message, onRetry }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-[#fff4f8] px-6">
+      <div className="max-w-xl rounded-lg border border-red-100 bg-white p-8 shadow-xl">
+        <h1 className="text-xl font-bold text-red-700">云端数据读取失败</h1>
+        <p className="mt-3 text-[#674158]">{message}</p>
+        <button onClick={onRetry} className="mt-5 rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white">重新读取</button>
+      </div>
+    </div>
+  )
+}
+
+function Dashboard({ customers, employees, followups, reviews, stores, role, profile, setActive }) {
+  const allStoreLabel = '全部门店'
+  const [selectedStore, setSelectedStore] = useState(allStoreLabel)
+  const normalizedRole = String(role || '').trim()
+  const isBoss = isBossRole(normalizedRole)
+  const isBeautician = isBeauticianRole(normalizedRole)
+  const canChooseStore = isBoss
+  const profileStore = normalizeStoreName(profile?.store) || defaultStores[0]
+  const today = todayString()
+  const storeOptions = validStoreNames
+  const dashboardStore = isBoss ? selectedStore : profileStore
+  const dashboardStoreName = normalizeStoreName(dashboardStore)
+  const filterByDashboardStore = !isBoss || selectedStore !== allStoreLabel
+  useEffect(() => {
+    if (!isBoss) return
+    localStorage.removeItem('selectedStore')
+    localStorage.removeItem('dashboardSelectedStore')
+    setSelectedStore(allStoreLabel)
+  }, [isBoss])
+  const visitDays = (value) => (value ? daysSince(value) : null)
+  const customerInScope = (customer) => {
+    const customerStore = normalizeStoreName(customer.store)
+    if (isBoss) return !filterByDashboardStore || customerStore === dashboardStoreName
+    if (isBeautician) return !profile?.name || customer.owner === profile.name
+    return customerStore === profileStore
+  }
+  const viewCustomers = customers.filter(customerInScope)
+  const thirtyNotVisited = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 30).length
+  const sixtyNotVisited = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 60).length
+  const ninetyHighRisk = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90).length
+  const employeeStore = (employee) => normalizeStoreName(employee.store)
+  const employeeInScope = (employee) => {
+    const store = employeeStore(employee)
+    if (!store) return false
+    if (isBoss) return !filterByDashboardStore || store === dashboardStoreName
+    if (isBeautician) return employee.name === profile?.name
+    return store === profileStore
+  }
+  const viewEmployees = employees.filter(employeeInScope)
+  const todayFollowupTotal = viewEmployees.reduce((sum, item) => sum + Number(item.today_followups || 0), 0)
+  const todayAppointments = viewEmployees.reduce((sum, item) => sum + Number(item.today_appointments || 0), 0)
+  const todayVisits = viewEmployees.reduce((sum, item) => sum + Number(item.today_arrivals || 0), 0)
+  const revenueStores = filterByDashboardStore ? [dashboardStoreName].filter(Boolean) : storeOptions
+  const revenueEmployees = viewEmployees
+  const storeRevenue = revenueStores.map((store) => {
+    const storeEmployees = revenueEmployees
+      .filter((item) => employeeStore(item) === store)
+    // 今日数据来自 employee_daily_stats，员工列表已在读取时按当天合并。
+    const employeeAmount = storeEmployees.reduce((sum, item) => sum + Number(item.today_sales || 0), 0)
+    return {
+      store,
+      employees: storeEmployees,
+      revenue: employeeAmount,
+    }
+  })
+  const maxRevenue = Math.max(...storeRevenue.map((item) => item.revenue), 1)
+  const dashboardRevenue = storeRevenue.reduce((sum, item) => sum + item.revenue, 0)
+  const staffRank = viewEmployees
+    .filter((item) => item.role === 'beautician')
+    .map((item) => ({
+      id: item.id,
+      name: item.name || '未填写',
+      store: employeeStore(item),
+      todayFollowups: Number(item.today_followups || 0),
+      todayAppointments: Number(item.today_appointments || 0),
+      followupRevenue: Number(item.today_sales || 0),
+    }))
+    .sort((a, b) => b.todayFollowups - a.todayFollowups)
+    .slice(0, 5)
+  const todoCustomers = viewCustomers
+    .filter((item) => (visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90) || item.nextFollowTime === today || item.followStatus === '未联系')
+    .sort((a, b) => (visitDays(b.lastVisit) || 0) - (visitDays(a.lastVisit) || 0))
+    .slice(0, 6)
+
+  const cards = [
+    ['今日跟进', todayFollowupTotal, '条', '今日员工跟进合计'],
+    ['90天高风险', ninetyHighRisk, '人', '优先由店长盯'],
+    ['今日到店', todayVisits, '人', '员工今日到店合计'],
+    ['今日成交', money(dashboardRevenue), '', '员工今日业绩合计'],
+  ]
+
+  return (
+    <div className="space-y-6">
+      {canChooseStore && (
+        <Panel title="门店筛选" subtitle="老板可查看全部门店，也可以单独查看某一家门店">
+          <QuickFilters
+            value={selectedStore}
+            options={[allStoreLabel, ...storeOptions]}
+            onChange={setSelectedStore}
+          />
+        </Panel>
+      )}
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        {cards.map(([label, value, unit, hint]) => (
+          <div key={label} className={`rounded-lg border bg-white p-5 shadow-sm ${label.includes('90天') ? 'border-red-200 ring-2 ring-red-100' : 'border-pink-100'}`}>
+            <div className="text-sm font-semibold text-[#9b6078]">{label}</div>
+            <div className={`mt-3 text-4xl font-bold ${label.includes('90天') ? 'text-red-600' : 'text-[#bd1657]'}`}>
+              {value}
+              <span className="ml-1 text-base font-semibold text-[#b9859a]">{unit}</span>
+            </div>
+            <div className="mt-2 text-xs text-[#a36a81]">{hint}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        {[
+          ['30天未到店', thirtyNotVisited],
+          ['60天未到店', sixtyNotVisited],
+          ['今日已邀约', todayAppointments],
+          ['老客回店率', percent(todayVisits, thirtyNotVisited)],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-pink-100 bg-white px-5 py-4 shadow-sm">
+            <div className="text-sm text-[#9b6078]">{label}</div>
+            <div className="mt-2 text-2xl font-bold text-[#641631]">{value}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_1fr]">
+        <Panel
+          title="今日先处理"
+          subtitle="按风险从高到低排序，店长早上打开就能看到"
+          action={<PrimaryButton onClick={() => setActive('activation')}>去激活顾客</PrimaryButton>}
+        >
+          <div className="grid gap-3">
+            {todoCustomers.map((item) => (
+              <div key={item.id} className={`flex items-center justify-between rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50' : 'border-pink-100 bg-pink-50'}`}>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
+                    <LevelBadge level={item.level} />
+                    <RiskBadge days={visitDays(item.lastVisit) || item.notVisitedDays || 0} />
+                  </div>
+                  <div className="mt-2 text-sm text-[#83536a]">{item.store} · {item.owner}</div>
+                </div>
+                <div className="text-right text-sm text-[#83536a]">
+                  <div>状态：{item.followStatus || '未联系'}</div>
+                  <div>下次：{item.nextFollowTime || '未定'}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="美容师复盘">
+          <div className="space-y-3">
+            {staffRank.map((item, index) => (
+              <div key={item.id} className="flex items-center justify-between rounded-lg bg-pink-50 px-4 py-4">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-8 w-8 place-items-center rounded-full bg-white text-sm font-bold text-[#c2185b]">{index + 1}</span>
+                  <div>
+                    <div className="font-semibold text-[#5f263c]">{item.name}</div>
+                    <div className="text-xs text-[#a36a81]">{item.store}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-center text-sm">
+                  <div><b className="block text-[#bd1657]">{item.todayFollowups}</b>跟进</div>
+                  <div><b className="block text-[#bd1657]">{item.todayAppointments}</b>预约</div>
+                  <div><b className="block text-[#bd1657]">{money(item.followupRevenue)}</b>成交</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </section>
+
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.2fr_1fr]">
+        <Panel title="4家门店业绩对比">
+          <div className="space-y-5">
+            {storeRevenue.map((item) => (
+              <div key={item.store}>
+                <div className="mb-2 flex justify-between text-sm">
+                  <span className="font-semibold text-[#643044]">{item.store}</span>
+                  <span className="font-bold text-[#bd1657]">{money(item.revenue)}</span>
+                </div>
+                <div className="mb-2 text-xs font-bold text-[#643044]">总业绩：{money(item.revenue)}</div>
+                <div className="h-3 rounded-full bg-pink-50">
+                  <div className="h-3 rounded-full bg-[#c2185b]" style={{ width: `${(item.revenue / maxRevenue) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="今日操作入口">
+          <div className="grid grid-cols-2 gap-3">
+            <QuickButton onClick={() => setActive('activation')}>处理未到店顾客</QuickButton>
+            <QuickButton onClick={() => setActive('followups')}>登记跟进结果</QuickButton>
+            <QuickButton onClick={() => setActive('reviews')}>填写每日复盘</QuickButton>
+            <QuickButton onClick={() => setActive('customers')}>查找顾客档案</QuickButton>
+          </div>
+        </Panel>
+      </section>
+    </div>
+  )
+}
+
+function CustomersModule({ customers, stores, profile, role, customerError, saveCustomer, deleteCustomer }) {
+  const canChooseStore = isBossRole(role)
+  const canEditCustomers = isBossRole(role) || String(role || '').trim() === 'manager'
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const defaultCustomerFilters = () => ({
+    status: '全部顾客',
+    store: canChooseStore ? '全部门店' : fixedStore,
+    level: '全部等级',
+    search: '',
+  })
+  const [editing, setEditing] = useState(null)
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+  const [filters, setFilters] = useState(defaultCustomerFilters)
+
+  const rows = customers || []
+  const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
+  const isAll = (value, allLabels = []) => value === undefined || value === null || value === '' || value === 'all' || allLabels.includes(value)
+  const filteredRows = rows.filter((item) => {
+    const statusFilter = filters.status
+    const storeFilter = filters.store
+    const levelFilter = filters.level
+    const search = String(filters.search || '').trim()
+    const storeMatch = isAll(storeFilter, ['全部门店']) || normalizeStoreName(item.store) === storeFilter
+    const levelMatch = isAll(levelFilter, ['全部等级']) || String(item.level || '').trim() === levelFilter
+    const days = daysSince(item.lastVisit)
+    const currentStatus = item.followStatus || item.lastFollowResult || ''
+    const statusMatch =
+      isAll(statusFilter, ['全部顾客']) ||
+      (statusFilter === '30天未到店' && days >= 30) ||
+      (statusFilter === '60天未到店' && days >= 60) ||
+      (statusFilter === '90天未到店' && days >= 90) ||
+      (statusFilter === 'A客/VIP' && item.level === 'A客/VIP') ||
+      (statusFilter === 'B客' && item.level === 'B客') ||
+      (statusFilter === '高风险顾客' && days >= 90) ||
+      (statusFilter === '已预约' && currentStatus === '已预约') ||
+      (statusFilter === '已到店' && currentStatus === '已到店') ||
+      (statusFilter === '无效客户' && currentStatus === '无效客户')
+    const searchMatch =
+      !search ||
+      String(item.name || '').includes(search) ||
+      String(item.phone || '').includes(search) ||
+      String(item.owner || '').includes(search)
+    return statusMatch && levelMatch && storeMatch && searchMatch
+  })
+
+  const showToast = (message) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const handleSaveCustomer = async (data) => {
+    setError('')
+    const payload = {
+      ...data,
+      store: canChooseStore ? data.store : fixedStore,
+      owner: isBeauticianRole(role) ? profile?.name || '' : data.owner,
+    }
+    await saveCustomer(payload)
+    setFilters(defaultCustomerFilters())
+    showToast('保存成功')
+    setEditing(null)
+  }
+
+  const remove = async (item) => {
+    if (!window.confirm(`确认删除顾客「${item.name || item.phone || item.id}」吗？`)) return
+    setError('')
+    try {
+      await deleteCustomer(item.id)
+      showToast('删除成功')
+    } catch (deleteError) {
+      setError(deleteError.message || '删除失败')
+    }
+  }
+
+  return (
+    <Panel
+      title="顾客档案"
+      subtitle="默认只显示店员最常用信息，更多内容点编辑查看"
+      action={canEditCustomers ? <PrimaryButton onClick={() => {
+        setFilters(defaultCustomerFilters())
+        setEditing({ name: '', phone: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
+      }}>新增顾客</PrimaryButton> : null}
+    >
+      {toast && <Toast>{toast}</Toast>}
+      {(error || customerError) && <ErrorNotice>{error || customerError}</ErrorNotice>}
+      <FilterBar>
+        <Select
+          value={filters.status}
+          onChange={(value) => setFilters({ ...filters, status: value })}
+          options={['全部顾客', '30天未到店', '60天未到店', '90天未到店', 'A客/VIP', 'B客', '高风险顾客', '已预约', '已到店', '无效客户']}
+        />
+        <Select
+          value={filters.level}
+          onChange={(value) => setFilters({ ...filters, level: value })}
+          options={['全部等级', 'A客/VIP', 'B客', 'C客', '普通']}
+        />
+        <Select
+          value={filters.store}
+          onChange={(value) => setFilters({ ...filters, store: value })}
+          options={storeOptions}
+          disabled={!canChooseStore}
+        />
+        <Input
+          value={filters.search}
+          onChange={(value) => setFilters({ ...filters, search: value })}
+          placeholder="搜索姓名/手机号/美容师"
+        />
+      </FilterBar>
+      <Table>
+        <thead>
+          <tr>
+            {['顾客姓名', '手机号', '负责门店', '美容师', '等级', '最后到店日期', '操作'].map((head) => (
+              <Th key={head}>{head}</Th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {filteredRows.length === 0 && (
+            <tr className="border-t border-pink-50">
+              <Td colSpan={7}>
+                <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无顾客数据</div>
+              </Td>
+            </tr>
+          )}
+          {filteredRows.length > 0 &&
+            filteredRows.map((item) => (
+              <tr key={item.id} className="border-t border-pink-50">
+                <Td>
+                  <div className="font-semibold text-[#5f263c]">{item.name}</div>
+                </Td>
+                <Td>{item.phone}</Td>
+                <Td>{item.store || ''}</Td>
+                <Td>{item.owner || ''}</Td>
+                <Td>{item.level || ''}</Td>
+                <Td>{item.lastVisit || ''}</Td>
+                <Td>
+                  {canEditCustomers ? (
+                    <>
+                      <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
+                      <ActionButton tone="danger" onClick={() => remove(item)}>删除</ActionButton>
+                    </>
+                  ) : ''}
+                </Td>
+              </tr>
+            ))}
+        </tbody>
+      </Table>
+
+      {editing && (
+        <CustomerDrawer
+          data={editing}
+          stores={stores}
+          profile={profile}
+          lockedStore={!canChooseStore}
+          lockedStoreValue={fixedStore}
+          lockedOwner={profile?.role === 'beautician'}
+          onClose={() => setEditing(null)}
+          onSave={handleSaveCustomer}
+        />
+      )}
+    </Panel>
+  )
+}
+
+function ActivationModule({ customers, stores, updateCustomerStatus }) {
+  const [localStatuses, setLocalStatuses] = useState({})
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+
+  const changeStatus = async (customer, status) => {
+    setError('')
+    setLocalStatuses((current) => ({ ...current, [customer.id]: status }))
+    try {
+      await updateCustomerStatus(customer.id, status)
+      setToast('已更新')
+      window.setTimeout(() => setToast(''), 1800)
+    } catch (updateError) {
+      setLocalStatuses((current) => ({ ...current, [customer.id]: customer.followStatus || '未联系' }))
+      setError(updateError.message || '更新失败')
+    }
+  }
+
+  const storeStats = stores.map((store) => {
+    const list = customers.filter((item) => item.store === store)
+    return {
+      store,
+      total: list.filter((item) => item.notVisitedDays >= 30).length,
+      risk90: list.filter((item) => item.notVisitedDays >= 90).length,
+      risk60: list.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90).length,
+      risk30: list.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60).length,
+    }
+  })
+  const groups = [
+    ['90天以上', '高风险，建议店长亲自盯', customers.filter((item) => item.notVisitedDays >= 90)],
+    ['60-89天', '重点挽回，先约护理体验', customers.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90)],
+    ['30-59天', '正常唤醒，美容师当天处理', customers.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60)],
+  ]
+
+  return (
+    <div className="space-y-5">
+      {toast && <Toast>{toast}</Toast>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
+      <Panel title="各门店未到店激活统计" subtitle="老板看全部门店，店长和美容师只看到自己权限内的数据">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+          {storeStats.map((item) => (
+            <div key={item.store} className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+              <div className="font-bold text-[#5f263c]">{item.store}</div>
+              <div className="mt-3 grid grid-cols-4 gap-2 text-center text-sm text-[#7b4f64]">
+                <div><b className="block text-xl text-[#bd1657]">{item.total}</b>总数</div>
+                <div><b className="block text-xl text-red-600">{item.risk90}</b>90天</div>
+                <div><b className="block text-xl text-orange-600">{item.risk60}</b>60天</div>
+                <div><b className="block text-xl text-[#bd1657]">{item.risk30}</b>30天</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      {groups.map(([title, hint, list]) => (
+        <Panel key={title} title={`${title}未到店`} subtitle={`${hint} · ${list.length} 位顾客`}>
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            {list.map((item) => (
+              <div key={item.id} className={`rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50 ring-1 ring-red-100' : 'border-pink-100 bg-white'}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
+                      <LevelBadge level={item.level} />
+                      <RiskBadge days={item.notVisitedDays} />
+                    </div>
+                    <div className="mt-2 text-sm text-[#7b4f64]">{item.store} · {item.owner}</div>
+                    <div className="mt-1 text-sm text-[#7b4f64]">最后到店日期：{item.lastVisit}</div>
+                    <div className="mt-2 rounded-md bg-white/80 px-3 py-2 text-sm text-[#674158]">上次结果：{item.lastFollowResult || '未联系'}</div>
+                  </div>
+                  <div className="text-right text-sm text-[#8a5268]">
+                    <div>下次跟进</div>
+                    <b className="text-[#bd1657]">{item.nextFollowTime || '未定'}</b>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {followStatusOptions.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => changeStatus(item, option)}
+                      className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
+                        (localStatuses[item.id] || item.followStatus || '未联系') === option
+                          ? 'bg-[#c2185b] text-white shadow-sm'
+                          : 'bg-white text-[#8a4964] ring-1 ring-pink-100 hover:bg-pink-50'
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ))}
+    </div>
+  )
+}
+
+function FollowupsModule({ followups, customers, employees, stores, profile, role, followupError, saveFollowup, deleteFollowup }) {
+  const canChooseStore = isBossRole(role)
+  const isBeautician = isBeauticianRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [editing, setEditing] = useState(null)
+  const [viewing, setViewing] = useState(null)
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+  const [filters, setFilters] = useState({ store: canChooseStore ? '全部' : fixedStore, owner: isBeautician ? profile?.name || '' : '全部', issueType: '全部', date: '' })
+  const staffSummary = employees
+    .filter((item) => item.role === 'beautician')
+    .map((employee) => {
+      const records = followups.filter((item) => item.owner === employee.name)
+      return {
+        ...employee,
+        records: records.length,
+        appointments: records.filter((item) => item.hasAppointment).length,
+        deals: records.filter((item) => item.hasDeal).length,
+      }
+    })
+    .sort((a, b) => b.records - a.records)
+  const owners = unique([...employees.map((item) => item.name), ...followups.map((item) => item.owner)].filter(Boolean))
+  const filteredFollowups = followups.filter((item) => {
+    const storeMatch = filters.store === '全部' || normalizeStoreName(item.store) === filters.store
+    const ownerMatch = filters.owner === '全部' || item.owner === filters.owner
+    const issueMatch = filters.issueType === '全部' || item.issueType === filters.issueType
+    const dateMatch = !filters.date || formatDateOnly(item.createdAt) === filters.date
+    return storeMatch && ownerMatch && issueMatch && dateMatch
+  })
+
+  const phoneOf = (followup) => {
+    if (followup.customerPhone) return followup.customerPhone
+    const customer = customers.find((item) => String(item.id) === String(followup.customerId) || item.name === followup.customerName)
+    return customer?.phone || ''
+  }
+
+  const save = async (data) => {
+    const customer = customers.find((item) => String(item.id) === String(data.customerId))
+    const forcedStore = canChooseStore
+      ? normalizeStoreName(customer?.store) || normalizeStoreName(data.store) || validStoreNames[0]
+      : fixedStore
+    const payload = {
+      id: data.id,
+      customerId: customer?.id ?? data.customerId,
+      customerName: customer?.name || data.customerName,
+      customerPhone: customer?.phone || data.customerPhone,
+      store: forcedStore,
+      owner: isBeautician ? profile?.name || '' : data.owner,
+      method: data.method,
+      content: data.content,
+      feedback: data.feedback,
+      issueType: data.issueType,
+      hasAppointment: data.hasAppointment,
+      appointmentTime: data.appointmentTime,
+      hasDeal: data.hasDeal,
+      dealAmount: Number(data.dealAmount || 0),
+      nextFollowTime: data.nextFollowTime,
+    }
+    await saveFollowup(payload)
+    setToast('保存成功')
+    setEditing(null)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const remove = async (item) => {
+    if (!window.confirm(`确认删除「${item.customerName || item.id}」的跟进记录吗？`)) return
+    setError('')
+    try {
+      await deleteFollowup(item.id)
+      setToast('删除成功')
+      window.setTimeout(() => setToast(''), 2200)
+    } catch (deleteError) {
+      setError(deleteError.message || '删除失败')
+    }
+  }
+
+  return (
+    <Panel
+      title="跟进记录"
+      subtitle="店员只需要登记结果，店长看预约和成交"
+      action={<PrimaryButton onClick={() => setEditing({ ...emptyFollowup, store: fixedStore || normalizeStoreName(profile?.store) || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '' })}>新增跟进</PrimaryButton>}
+    >
+      {toast && <Toast>{toast}</Toast>}
+      {(error || followupError) && <ErrorNotice>{error || followupError}</ErrorNotice>}
+      <FilterBar>
+        <Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value })} options={canChooseStore ? ['全部', ...stores] : [fixedStore]} disabled={!canChooseStore} />
+        <Select value={filters.owner} onChange={(value) => setFilters({ ...filters, owner: value })} options={isBeautician ? [profile?.name || ''] : ['全部', ...owners]} disabled={isBeautician} />
+        <Select value={filters.issueType} onChange={(value) => setFilters({ ...filters, issueType: value })} options={['全部', ...issueOptions]} />
+        <Input type="date" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} />
+      </FilterBar>
+      <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {staffSummary.slice(0, 4).map((item) => (
+          <div key={item.id} className="rounded-lg bg-pink-50 p-4">
+            <div className="font-bold text-[#5f263c]">{item.name}</div>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-center text-sm text-[#7b4f64]">
+              <div><b className="block text-xl text-[#bd1657]">{item.records}</b>跟进</div>
+              <div><b className="block text-xl text-[#bd1657]">{item.appointments}</b>预约</div>
+              <div><b className="block text-xl text-[#bd1657]">{item.deals}</b>成交</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <Table>
+        <thead>
+          <tr>
+            {['顾客姓名', '手机号', '跟进人', '沟通内容', '顾客反馈', '问题分类', '是否预约', '是否成交', '成交金额', '下次跟进时间', '创建时间', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {filteredFollowups.length === 0 && (
+            <tr className="border-t border-pink-50">
+              <Td colSpan={12}>
+                <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无跟进记录</div>
+              </Td>
+            </tr>
+          )}
+          {filteredFollowups.map((item) => (
+            <tr key={item.id} className="border-t border-pink-50">
+              <Td><div className="font-semibold text-[#5f263c]">{item.customerName}</div></Td>
+              <Td>{phoneOf(item)}</Td>
+              <Td>{item.owner}</Td>
+              <Td className="max-w-64">{item.content}</Td>
+              <Td className="max-w-64">{item.feedback}</Td>
+              <Td>{item.issueType}</Td>
+              <Td><StatusPill tone={item.hasAppointment ? 'green' : 'gray'}>{item.hasAppointment ? '已预约' : '未预约'}</StatusPill></Td>
+              <Td><StatusPill tone={item.hasDeal ? 'red' : 'light'}>{item.hasDeal ? '已成交' : '未成交'}</StatusPill></Td>
+              <Td>{money(item.dealAmount)}</Td>
+              <Td>{item.nextFollowTime || '-'}</Td>
+              <Td>{formatDateTime(item.createdAt)}</Td>
+              <Td>
+                <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
+                <ActionButton onClick={() => setViewing(item)}>查看详情</ActionButton>
+                {canManage(role, 'review') && <ActionButton tone="danger" onClick={() => remove(item)}>删除</ActionButton>}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      {editing && <FollowupDrawer data={editing} customers={customers} employees={employees} stores={stores} profile={profile} lockedStore={!canChooseStore} lockedStoreValue={fixedStore} onClose={() => setEditing(null)} onSave={save} />}
+      {viewing && <FollowupDetail followup={viewing} phone={phoneOf(viewing)} onClose={() => setViewing(null)} />}
+    </Panel>
+  )
+}
+
+function ReviewsModule({ reviews, stores, role, profile, dailyReviewError, saveReview, deleteReview }) {
+  const canChooseStore = isBossRole(role)
+  const canEditReviews = isBossRole(role) || String(role || '').trim() === 'manager'
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [editing, setEditing] = useState(null)
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+
+  const save = async (data) => {
+    const numeric = ['inviteRate', 'appointmentRate', 'arrivalRate', 'dealRate', 'dealAmount']
+    const payload = { ...data, store: canChooseStore ? data.store : fixedStore }
+    numeric.forEach((key) => { payload[key] = Number(payload[key] || 0) })
+    await saveReview(payload)
+    setToast('保存成功')
+    setEditing(null)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const remove = async (id) => {
+    if (!window.confirm('确认删除这条复盘记录吗？')) return
+    setError('')
+    try {
+      await deleteReview(id)
+      setToast('删除成功')
+      window.setTimeout(() => setToast(''), 2200)
+    } catch (deleteError) {
+      setError(deleteError.message || '删除失败')
+    }
+  }
+
+  return (
+    <Panel title="每日复盘" subtitle="只看完成率、转化率和明日动作" action={canEditReviews ? <PrimaryButton onClick={() => setEditing({ date: todayString(), store: fixedStore || stores[0] || '', inviteRate: 0, appointmentRate: 0, arrivalRate: 0, dealRate: 0, dealAmount: 0, unfinishedReason: '', tomorrowAction: '' })}>新增复盘</PrimaryButton> : null}>
+      {toast && <Toast>{toast}</Toast>}
+      {(error || dailyReviewError) && <ErrorNotice>{error || dailyReviewError}</ErrorNotice>}
+      <Table>
+        <thead>
+          <tr>
+            {['日期', '门店', '邀约完成率', '预约转化率', '到店转化率', '成交转化率', '成交金额', '未完成原因', '明日动作', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {reviews.length === 0 && (
+            <tr className="border-t border-pink-50">
+              <Td colSpan={10}>
+                <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无复盘数据</div>
+              </Td>
+            </tr>
+          )}
+          {reviews.map((item) => (
+            <tr key={item.id} className="border-t border-pink-50">
+              <Td>{item.date}</Td>
+              <Td>{item.store || '未设置门店'}</Td>
+              <Td><MetricPill>{item.inviteRate ?? item.invite_rate ?? 0}%</MetricPill></Td>
+              <Td><MetricPill>{item.appointmentRate ?? item.appointment_rate ?? 0}%</MetricPill></Td>
+              <Td><MetricPill>{item.arrivalRate ?? item.arrival_rate ?? 0}%</MetricPill></Td>
+              <Td><MetricPill>{item.dealRate ?? item.deal_rate ?? 0}%</MetricPill></Td>
+              <Td>{money(item.dealAmount ?? item.deal_amount)}</Td>
+              <Td className="max-w-60">{item.unfinishedReason ?? item.unfinished_reason}</Td>
+              <Td className="max-w-60">{item.tomorrowAction ?? item.tomorrow_action}</Td>
+              <Td>
+                {canEditReviews ? (
+                  <>
+                    <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
+                    <ActionButton tone="danger" onClick={() => remove(item.id)}>删除</ActionButton>
+                  </>
+                ) : ''}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      {editing && <ReviewDrawer data={editing} stores={stores} lockedStore={!canChooseStore} lockedStoreValue={fixedStore} onClose={() => setEditing(null)} onSave={save} />}
+    </Panel>
+  )
+}
+
+function EmployeesModule({ employees, stores, role, profile, employeeError, saveEmployee, deleteEmployee }) {
+  const canChooseStore = isBossRole(role)
+  const canEditEmployees = isBossRole(role) || String(role || '').trim() === 'manager'
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [editing, setEditing] = useState(null)
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+
+  const showToast = (message) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const save = async (data) => {
+    setError('')
+    try {
+      await saveEmployee({ ...data, store: canChooseStore ? data.store : fixedStore })
+      setEditing(null)
+      showToast('保存成功')
+    } catch (saveError) {
+      setError(saveError.message || '保存失败')
+    }
+  }
+
+  const remove = async (item) => {
+    if (!window.confirm('确定删除该员工吗？')) return
+    setError('')
+    try {
+      await deleteEmployee(item.id)
+      showToast('删除成功')
+    } catch (deleteError) {
+      setError(deleteError.message || '删除失败')
+    }
+  }
+
+  return (
+    <Panel title="员工管理" subtitle="员工基础资料长期保存，今日数据按日期保存" action={canEditEmployees ? <PrimaryButton onClick={() => setEditing({ ...emptyEmployee, store: fixedStore || stores[0] || defaultStores[0] })}>新增员工</PrimaryButton> : null}>
+      {toast && <Toast>{toast}</Toast>}
+      {(error || employeeError) && <ErrorNotice>{error || employeeError}</ErrorNotice>}
+      <Table>
+        <thead>
+          <tr>
+            {['员工姓名', '手机号', '所属门店', '角色', '今日跟进数', '今日预约数', '今日到店数', '今日成交数', '今日销售额', '备注', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {employees.length === 0 && (
+            <tr className="border-t border-pink-50">
+              <Td colSpan={11}>
+                <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工数据</div>
+              </Td>
+            </tr>
+          )}
+          {employees.map((item) => (
+            <tr key={item.id} className="border-t border-pink-50">
+              <Td><div className="font-semibold text-[#5f263c]">{item.name}</div></Td>
+              <Td>{item.phone}</Td>
+              <Td>{item.store}</Td>
+              <Td>{roleLabel(item.role)}</Td>
+              <Td>{item.today_followups || 0}</Td>
+              <Td>{item.today_appointments || 0}</Td>
+              <Td>{item.today_arrivals || 0}</Td>
+              <Td>{item.today_deals || 0}</Td>
+              <Td>{money(item.today_sales || 0)}</Td>
+              <Td>{item.note || ''}</Td>
+              <Td>
+                {canEditEmployees ? (
+                  <>
+                    <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
+                    <ActionButton tone="danger" onClick={() => remove(item)}>删除</ActionButton>
+                  </>
+                ) : ''}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      {editing && <EmployeeDrawer data={editing} stores={stores} lockedStore={!canChooseStore} lockedStoreValue={fixedStore} onClose={() => setEditing(null)} onSave={save} />}
+    </Panel>
+  )
+}
+
+function LockedStoreDisplay({ value }) {
+  return (
+    <div className="w-full rounded-lg border border-pink-100 bg-pink-50 px-5 py-4 text-base font-semibold text-[#8a4964]">
+      {value || '未设置门店'}
+    </div>
+  )
+}
+
+function CustomerDrawer({ data, stores, profile, lockedStore, lockedStoreValue, lockedOwner, onClose, onSave }) {
+  const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || normalizeStoreName(profile?.store) || data.store : data.store
+  const [customerForm, setCustomerForm] = useState({
+    ...data,
+    store: fixedStore,
+    owner: lockedOwner ? profile?.name || '' : data.owner ?? '',
+  })
+
+  return (
+    <Drawer title="新增顾客" onClose={onClose} onSave={() => onSave(customerForm)} successMessage="顾客档案创建成功">
+      <FormGrid>
+        <Field label="顾客姓名"><Input value={customerForm.name} onChange={(value) => setCustomerForm({ ...customerForm, name: value })} /></Field>
+        <Field label="手机号"><Input value={customerForm.phone} onChange={(value) => setCustomerForm({ ...customerForm, phone: value })} /></Field>
+        <Field label="所属门店">
+          {lockedStore ? (
+            <LockedStoreDisplay value={fixedStore} />
+          ) : (
+            <Select value={customerForm.store} onChange={(value) => setCustomerForm({ ...customerForm, store: value, owner: '' })} options={stores} />
+          )}
+        </Field>
+        <Field label="负责美容师">
+          <input
+            type="text"
+            value={customerForm.owner ?? ''}
+            onChange={(event) => setCustomerForm({ ...customerForm, owner: event.target.value })}
+            placeholder="请输入负责美容师姓名"
+            disabled={lockedOwner}
+            className="w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100"
+          />
+        </Field>
+        <Field label="顾客等级"><Select value={customerForm.level} onChange={(value) => setCustomerForm({ ...customerForm, level: value })} options={['', ...levelOptions]} /></Field>
+        <Field label="最后到店日期"><Input type="date" value={customerForm.lastVisit} onChange={(value) => setCustomerForm({ ...customerForm, lastVisit: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
+function FollowupDrawer({ data, customers, employees, stores, profile, lockedStore, lockedStoreValue, onClose, onSave }) {
+  const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || normalizeStoreName(profile?.store) || data.store : data.store
+  const [form, setForm] = useState({ ...data, store: fixedStore, owner: profile?.role === 'beautician' ? profile.name : data.owner })
+  const staff = profile?.role === 'beautician' ? [profile.name] : employees.map((item) => item.name)
+  return (
+    <Drawer title={form.id ? '编辑跟进记录' : '新增跟进记录'} onClose={onClose} onSave={() => onSave(form)}>
+      <FormGrid>
+        <Field label={<RequiredLabel>顾客姓名</RequiredLabel>}><Select value={form.customerId} onChange={(value) => {
+          const customer = customers.find((item) => String(item.id) === String(value))
+          setForm({ ...form, customerId: value, customerName: customer?.name || '', customerPhone: customer?.phone || '', store: customer?.store || form.store })
+        }} options={customers.map((item) => [item.id, item.name])} /></Field>
+        <Field label={<RequiredLabel>所属门店</RequiredLabel>}>
+          {lockedStore ? (
+            <LockedStoreDisplay value={fixedStore} />
+          ) : (
+            <Select value={form.store} onChange={(value) => setForm({ ...form, store: value })} options={stores} />
+          )}
+        </Field>
+        <Field label={<RequiredLabel>跟进方式</RequiredLabel>}><Select value={form.method} onChange={(value) => setForm({ ...form, method: value })} options={followMethods} /></Field>
+        <Field label={<RequiredLabel>跟进人</RequiredLabel>}><Select value={form.owner} onChange={(value) => setForm({ ...form, owner: value })} options={staff} /></Field>
+        <Field label="是否预约"><Select value={String(form.hasAppointment)} onChange={(value) => setForm({ ...form, hasAppointment: value === 'true' })} options={[['false', '否'], ['true', '是']]} /></Field>
+        <Field label="预约到店时间"><Input type="date" value={form.appointmentTime} onChange={(value) => setForm({ ...form, appointmentTime: value })} /></Field>
+        <Field label="是否成交"><Select value={String(form.hasDeal)} onChange={(value) => setForm({ ...form, hasDeal: value === 'true' })} options={[['false', '否'], ['true', '是']]} /></Field>
+        <Field label="成交金额"><Input type="number" value={form.dealAmount} onChange={(value) => setForm({ ...form, dealAmount: value })} /></Field>
+        <Field label="下次跟进时间"><Input type="date" value={form.nextFollowTime} onChange={(value) => setForm({ ...form, nextFollowTime: value })} /></Field>
+        <Field label="问题分类"><Select value={form.issueType} onChange={(value) => setForm({ ...form, issueType: value })} options={issueOptions} /></Field>
+        <Field label="沟通内容" full><Textarea value={form.content} onChange={(value) => setForm({ ...form, content: value })} /></Field>
+        <Field label="顾客反馈" full><Textarea value={form.feedback} onChange={(value) => setForm({ ...form, feedback: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
+function FollowupDetail({ followup, phone, onClose }) {
+  const rows = [
+    ['顾客姓名', followup.customerName],
+    ['手机号', phone],
+    ['跟进人', followup.owner],
+    ['跟进日期', followup.date],
+    ['沟通内容', followup.content],
+    ['顾客反馈', followup.feedback],
+    ['问题分类', followup.issueType],
+    ['是否预约', followup.hasAppointment ? '已预约' : '未预约'],
+    ['是否成交', followup.hasDeal ? '已成交' : '未成交'],
+    ['成交金额', money(followup.dealAmount)],
+    ['下次跟进时间', followup.nextFollowTime],
+    ['创建时间', formatDateTime(followup.createdAt)],
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#32111f]/30">
+      <div className="h-full w-full max-w-[620px] overflow-y-auto bg-white p-6 shadow-2xl scrollbar-soft">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-[#641631]">跟进详情</h3>
+          <button onClick={onClose} className="rounded-md px-4 py-2 text-sm font-semibold text-[#8b4d66] hover:bg-pink-50">关闭</button>
+        </div>
+        <div className="rounded-lg bg-pink-50/70 p-5">
+          {rows.map(([label, value]) => (
+            <div key={label} className="grid grid-cols-[130px_1fr] border-b border-pink-100 py-3 last:border-b-0">
+              <div className="font-semibold text-[#79445b]">{label}</div>
+              <div className="text-[#5f263c]">{value || '-'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReviewDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, onSave }) {
+  const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || data.store : data.store
+  const [form, setForm] = useState({ ...data, store: fixedStore })
+  return (
+    <Drawer title={form.id ? '编辑每日复盘' : '新增每日复盘'} onClose={onClose} onSave={() => onSave(form)}>
+      <FormGrid>
+        <Field label="日期"><Input type="date" value={form.date} onChange={(value) => setForm({ ...form, date: value })} /></Field>
+        <Field label="门店">
+          {lockedStore ? (
+            <LockedStoreDisplay value={fixedStore} />
+          ) : (
+            <Select value={form.store} onChange={(value) => setForm({ ...form, store: value })} options={stores} />
+          )}
+        </Field>
+        <Field label="邀约完成率"><Input type="number" value={form.inviteRate} onChange={(value) => setForm({ ...form, inviteRate: value })} /></Field>
+        <Field label="预约转化率"><Input type="number" value={form.appointmentRate} onChange={(value) => setForm({ ...form, appointmentRate: value })} /></Field>
+        <Field label="到店转化率"><Input type="number" value={form.arrivalRate} onChange={(value) => setForm({ ...form, arrivalRate: value })} /></Field>
+        <Field label="成交转化率"><Input type="number" value={form.dealRate} onChange={(value) => setForm({ ...form, dealRate: value })} /></Field>
+        <Field label="成交金额"><Input type="number" value={form.dealAmount} onChange={(value) => setForm({ ...form, dealAmount: value })} /></Field>
+        <Field label="未完成原因" full><Textarea value={form.unfinishedReason} onChange={(value) => setForm({ ...form, unfinishedReason: value })} /></Field>
+        <Field label="明日动作" full><Textarea value={form.tomorrowAction} onChange={(value) => setForm({ ...form, tomorrowAction: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
+function EmployeeDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, onSave }) {
+  const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || data.store : data.store
+  const [form, setForm] = useState({ ...data, store: fixedStore })
+  return (
+    <Drawer title={form.id ? '编辑员工' : '新增员工'} onClose={onClose} onSave={() => onSave(form)}>
+      <FormGrid>
+        <Field label="员工姓名"><Input value={form.name} onChange={(value) => setForm({ ...form, name: value })} /></Field>
+        <Field label="手机号"><Input value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} /></Field>
+        <Field label="所属门店">
+          {lockedStore ? (
+            <LockedStoreDisplay value={fixedStore} />
+          ) : (
+            <Select value={form.store} onChange={(value) => setForm({ ...form, store: value })} options={stores} />
+          )}
+        </Field>
+        <Field label="角色"><Select value={form.role} onChange={(value) => setForm({ ...form, role: value })} options={[['manager', '店长'], ['beautician', '美容师']]} /></Field>
+        <Field label="今日跟进数"><Input type="number" value={form.today_followups ?? 0} onChange={(value) => setForm({ ...form, today_followups: value })} /></Field>
+        <Field label="今日预约数"><Input type="number" value={form.today_appointments ?? 0} onChange={(value) => setForm({ ...form, today_appointments: value })} /></Field>
+        <Field label="今日到店数"><Input type="number" value={form.today_arrivals ?? 0} onChange={(value) => setForm({ ...form, today_arrivals: value })} /></Field>
+        <Field label="今日成交数"><Input type="number" value={form.today_deals ?? 0} onChange={(value) => setForm({ ...form, today_deals: value })} /></Field>
+        <Field label="今日销售额"><Input type="number" value={form.today_sales ?? 0} onChange={(value) => setForm({ ...form, today_sales: value })} /></Field>
+        <Field label="备注" full><Textarea value={form.note} onChange={(value) => setForm({ ...form, note: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
+function Panel({ title, subtitle, action, children }) {
+  return (
+    <section className="rounded-lg border border-pink-100 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-[#641631]">{title}</h2>
+          {subtitle && <p className="mt-1 text-sm text-[#a36a81]">{subtitle}</p>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Drawer({ title, onClose, onSave, children, successMessage }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError('')
+    setSuccess('')
+    try {
+      await onSave()
+      if (successMessage) setSuccess(successMessage)
+    } catch (saveError) {
+      setError(saveError.message || '保存失败，请检查表字段和网络连接。')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#32111f]/30">
+      <div className="h-full w-full max-w-[680px] overflow-y-auto bg-white p-6 shadow-2xl scrollbar-soft">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-[#641631]">{title}</h3>
+          <button onClick={onClose} className="rounded-md px-4 py-2 text-sm font-semibold text-[#8b4d66] hover:bg-pink-50">关闭</button>
+        </div>
+        {children}
+        {success && <div className="mt-5 rounded-lg bg-pink-50 px-4 py-3 text-sm font-semibold leading-6 text-[#c2185b]">{success}</div>}
+        {error && <div className="mt-5 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{error}</div>}
+        <div className="mt-6 flex justify-end gap-3">
+          <button onClick={onClose} className="rounded-lg border border-pink-100 px-6 py-3 font-semibold text-[#8b4d66] hover:bg-pink-50">取消</button>
+          <PrimaryButton onClick={handleSave}>{saving ? '保存中...' : '保存'}</PrimaryButton>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Toast({ children }) {
+  return (
+    <div className="fixed right-8 top-6 z-[60] rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-xl shadow-pink-200">
+      {children}
+    </div>
+  )
+}
+
+function ErrorNotice({ children }) {
+  return (
+    <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+      {children}
+    </div>
+  )
+}
+
+function Table({ children }) {
+  return <div className="overflow-x-auto scrollbar-soft"><table className="w-full min-w-[860px] border-collapse text-left text-sm">{children}</table></div>
+}
+
+function Th({ children }) {
+  return <th className="whitespace-nowrap bg-pink-50 px-4 py-3 font-bold text-[#7a3450]">{children}</th>
+}
+
+function Td({ children, className = '', ...props }) {
+  return <td {...props} className={`align-top px-4 py-3 text-[#674158] ${className}`}>{children}</td>
+}
+
+function FilterBar({ children }) {
+  return <div className="mb-3 grid grid-cols-2 gap-3 xl:grid-cols-4">{children}</div>
+}
+
+function Field({ label, full, children }) {
+  return <label className={full ? 'md:col-span-2' : ''}><span className="mb-2 block text-[15px] font-semibold text-[#79445b]">{label}</span>{children}</label>
+}
+
+function FormGrid({ children }) {
+  return <div className="grid grid-cols-1 gap-5 rounded-lg bg-pink-50/70 p-5 md:grid-cols-2">{children}</div>
+}
+
+function Input({ value, onChange, type = 'text', placeholder = '' }) {
+  return <input type={type} placeholder={placeholder} value={value ?? ''} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100" />
+}
+
+function Textarea({ value, onChange }) {
+  return <textarea rows={3} value={value ?? ''} onChange={(event) => onChange(event.target.value)} className="w-full resize-none rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100" />
+}
+
+function Select({ value, onChange, options, disabled = false }) {
+  return (
+    <select disabled={disabled} value={value ?? ''} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100 disabled:bg-pink-50 disabled:text-[#9a6078]">
+      {options.map((option) => Array.isArray(option) ? <option key={option[0]} value={option[0]}>{option[1]}</option> : <option key={option}>{option}</option>)}
+    </select>
+  )
+}
+
+function PrimaryButton({ children, onClick }) {
+  return <button onClick={onClick} className="rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d]">{children}</button>
+}
+
+function ActionButton({ children, onClick, tone = 'normal' }) {
+  return <button onClick={onClick} className={`mr-2 rounded-md px-3 py-2 text-sm font-semibold ${tone === 'danger' ? 'text-[#c03955] hover:bg-red-50' : 'text-[#c2185b] hover:bg-pink-50'}`}>{children}</button>
+}
+
+function LevelBadge({ level }) {
+  const vip = level === 'A客/VIP'
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${vip ? 'bg-[#c2185b] text-white' : 'bg-pink-50 text-[#9a3f63]'}`}>{level}</span>
+}
+
+function RequiredLabel({ children }) {
+  return <>{children}<span className="ml-1 text-red-500">*</span></>
+}
+
+function StatusPill({ children, tone }) {
+  const styles = {
+    green: 'bg-green-50 text-green-700 ring-green-100',
+    gray: 'bg-gray-100 text-gray-600 ring-gray-200',
+    red: 'bg-red-50 text-red-700 ring-red-100',
+    light: 'bg-slate-50 text-slate-500 ring-slate-100',
+  }
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${styles[tone] || styles.light}`}>{children}</span>
+}
+
+function formatDateTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatDateOnly(value) {
+  if (!value) return ''
+  return String(value).slice(0, 10)
+}
+
+function RiskBadge({ days }) {
+  const high = days >= 90
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${high ? 'bg-red-100 text-red-700 ring-1 ring-red-200' : days >= 60 ? 'bg-orange-100 text-orange-700' : days >= 30 ? 'bg-pink-100 text-[#bd1657]' : 'bg-green-50 text-green-700'}`}>{days}天{high ? ' 高风险' : ''}</span>
+}
+
+function MetricPill({ children }) {
+  return <span className="inline-block rounded-full bg-white px-3 py-1 font-bold text-[#c2185b] ring-1 ring-pink-100">{children}</span>
+}
+
+function QuickButton({ children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="min-h-20 rounded-lg border border-pink-100 bg-pink-50 px-4 py-4 text-left text-base font-bold text-[#7a3450] transition hover:border-[#c2185b] hover:bg-white hover:text-[#c2185b]"
+    >
+      {children}
+    </button>
+  )
+}
+
+function QuickFilters({ value, options, onChange }) {
+  return (
+    <div className="mb-4 flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option}
+          onClick={() => onChange(option)}
+          className={`rounded-full px-4 py-2 text-sm font-semibold ${
+            value === option ? 'bg-[#c2185b] text-white' : 'bg-pink-50 text-[#8a4964] hover:bg-pink-100'
+          }`}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function unique(list) {
+  return [...new Set(list)].filter(Boolean)
+}
+
+export default App

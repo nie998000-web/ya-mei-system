@@ -1,0 +1,129 @@
+export const validStoreNames = ['龙泉1店', '龙泉2店', '龙泉金龙店', '郫县1店']
+
+export function normalizeStoreName(value, fallback = '') {
+  if (!value) return fallback
+
+  const name = String(value).trim()
+  const compactName = name.replace(/\s+/g, '')
+
+  if (compactName.includes('龙泉1')) return '龙泉1店'
+  if (compactName.includes('龙泉2')) return '龙泉2店'
+  if (compactName.includes('金龙')) return '龙泉金龙店'
+  if (compactName.includes('郫县')) return '郫县1店'
+
+  return validStoreNames.includes(name) ? name : fallback
+}
+
+function normalizeStoreForWrite(rowStore, profileStore) {
+  return normalizeStoreName(rowStore) || normalizeStoreName(profileStore) || validStoreNames[0]
+}
+
+export function fromCustomer(row) {
+  const storeName = normalizeStoreName(row.store) || validStoreNames[0]
+  return {
+    id: row.id,
+    name: String(row.name ?? ''),
+    phone: String(row.phone ?? ''),
+    store: storeName,
+    owner: String(row.owner ?? ''),
+    level: String(row.level || ''),
+    lastVisit: row.last_visit ?? '',
+    lastFollowResult: row.last_follow_result || '未联系',
+    lastFollowTime: row.last_follow_time || '',
+    nextFollowTime: row.next_follow_time || '',
+    followStatus: row.follow_status || '未联系',
+  }
+}
+
+export function fromEmployee(row) {
+  return {
+    id: row.id,
+    name: row.name || '',
+    phone: row.phone || '',
+    store: row.store || '',
+    role: row.role || 'beautician',
+    today_followups: row.today_followups ?? 0,
+    today_appointments: row.today_appointments ?? 0,
+    today_arrivals: row.today_arrivals ?? 0,
+    today_deals: row.today_deals ?? 0,
+    today_sales: row.today_sales ?? null,
+    note: row.note || '',
+    userId: row.user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function fromFollowup(row) {
+  return {
+    id: row.id,
+    customerId: row.customer_id == null ? '' : Number(row.customer_id),
+    customerName: row.customer_name || '',
+    customerPhone: row.customer_phone || '',
+    date: row.created_at ? String(row.created_at).slice(0, 10) : '',
+    method: row.method,
+    owner: row.owner,
+    content: row.content,
+    feedback: row.feedback,
+    hasAppointment: row.has_appointment,
+    appointmentTime: row.appointment_time,
+    hasDeal: row.has_deal,
+    dealAmount: row.deal_amount,
+    nextFollowTime: row.next_follow_time,
+    issueType: row.issue_type,
+    store: normalizeStoreName(row.store),
+    createdAt: row.created_at,
+  }
+}
+
+export function toFollowup(row, profile) {
+  const customerId = row.customerId === undefined || row.customerId === null || row.customerId === ''
+    ? null
+    : Number(row.customerId)
+
+  return {
+    customer_id: Number.isFinite(customerId) ? customerId : null,
+    customer_name: row.customerName || '',
+    customer_phone: row.customerPhone || '',
+    store: normalizeStoreForWrite(row.store, profile?.store),
+    method: row.method,
+    owner: profile?.role === 'beautician' ? profile.name : row.owner,
+    content: row.content,
+    feedback: row.feedback,
+    has_appointment: Boolean(row.hasAppointment),
+    appointment_time: row.appointmentTime || null,
+    has_deal: Boolean(row.hasDeal),
+    deal_amount: Number(row.dealAmount || 0),
+    next_follow_time: row.nextFollowTime || null,
+    issue_type: row.issueType,
+  }
+}
+
+export function fromReview(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    store: normalizeStoreName(row.store),
+    inviteRate: row.invite_rate,
+    appointmentRate: row.appointment_rate,
+    arrivalRate: row.arrival_rate,
+    dealRate: row.deal_rate,
+    dealAmount: row.deal_amount,
+    unfinishedReason: row.unfinished_reason,
+    tomorrowAction: row.tomorrow_action,
+  }
+}
+
+export function toReview(row, profile) {
+  return {
+    date: row.date,
+    store: normalizeStoreForWrite(row.store, profile?.store),
+    invite_rate: Number(row.inviteRate || 0),
+    appointment_rate: Number(row.appointmentRate || 0),
+    arrival_rate: Number(row.arrivalRate || 0),
+    deal_rate: Number(row.dealRate || 0),
+    deal_amount: Number(row.dealAmount || 0),
+    unfinished_reason: row.unfinishedReason || '',
+    tomorrow_action: row.tomorrowAction || '',
+  }
+}
