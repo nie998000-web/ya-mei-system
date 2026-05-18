@@ -218,6 +218,7 @@ function App() {
     employeeError: cloud.employeeError,
     dailyReviewError: cloud.dailyReviewError,
     saveCustomer: cloud.saveCustomer,
+    importCustomers: cloud.importCustomers,
     deleteCustomer: cloud.deleteCustomer,
     updateCustomerStatus: cloud.updateCustomerStatus,
     saveFollowup: cloud.saveFollowup,
@@ -578,7 +579,7 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
   )
 }
 
-function CustomersModule({ customers, stores, profile, role, customerError, saveCustomer, deleteCustomer }) {
+function CustomersModule({ customers, stores, profile, role, customerError, saveCustomer, importCustomers: importCustomerRows, deleteCustomer }) {
   const canChooseStore = isBossRole(role)
   const canEditCustomers = isBossRole(role) || String(role || '').trim() === 'manager'
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
@@ -662,15 +663,13 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
       const text = await file.text()
       const importedRows = parseCustomerImportText(text)
       if (importedRows.length === 0) throw new Error('没有识别到可导入的顾客数据，请检查表头。')
-      for (const row of importedRows) {
-        await saveCustomer({
-          ...row,
-          store: canChooseStore ? row.store : fixedStore,
-          owner: isBeauticianRole(role) ? profile?.name || '' : row.owner,
-        })
-      }
+      const result = await importCustomerRows(importedRows.map((row) => ({
+        ...row,
+        store: canChooseStore ? row.store : fixedStore,
+        owner: isBeauticianRole(role) ? profile?.name || '' : row.owner,
+      })))
       setFilters(defaultCustomerFilters())
-      showToast(`成功导入 ${importedRows.length} 位顾客`)
+      showToast(`成功处理 ${result.saved} 位顾客，已按手机号自动更新/新增`)
     } catch (importError) {
       setError(importError.message || '导入失败')
     } finally {

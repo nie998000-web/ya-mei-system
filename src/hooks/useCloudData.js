@@ -426,6 +426,38 @@ export function useCloudData(session) {
     await loadCustomers(profile)
   }
 
+  const importCustomers = async (rows) => {
+    const payloads = (rows || [])
+      .map((row) => {
+        const phone = String(row.phone || '').trim()
+        if (!phone) return null
+        return {
+          name: row.name || '',
+          phone,
+          age: row.age === '' || row.age == null ? null : Number(row.age),
+          birthday: row.birthday || null,
+          store: writeStoreForProfile(row.store, profile),
+          owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
+          level: row.level || '',
+          last_visit: row.lastVisit || null,
+        }
+      })
+      .filter(Boolean)
+
+    if (payloads.length === 0) throw new Error('导入数据必须包含手机号。')
+
+    const dedupedByPhone = [...new Map(payloads.map((row) => [row.phone, row])).values()]
+    const { data, error: importError } = await supabase
+      .from('customers')
+      .upsert(dedupedByPhone, { onConflict: 'phone' })
+      .select(customerSelectFields)
+
+    if (importError) throw new Error(customerSchemaError(importError))
+    setCustomers((data || []).map(fromCustomer))
+    await loadCustomers(profile)
+    return { total: rows.length, saved: dedupedByPhone.length }
+  }
+
   const deleteCustomer = async (id) => {
     const { error: deleteError } = await supabase.from('customers').delete().eq('id', id)
     if (deleteError) throw new Error(errorMessage(deleteError))
@@ -579,6 +611,7 @@ export function useCloudData(session) {
     loadEmployees,
     loadDailyReviews,
     saveCustomer,
+    importCustomers,
     deleteCustomer,
     updateCustomerStatus,
     saveFollowup,
