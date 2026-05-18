@@ -136,9 +136,10 @@ export function fromPerformanceReport(row) {
   const serviceSales = Number(row.service_sales || 0)
   const consumeSales = Number(row.consume_sales || 0)
   const cashSales = Number(row.cash_sales || 0)
-  const upgradeSales = Number(row.upgrade_sales || 0)
+  const upsellAmount = Number(row.upsell_amount || 0)
   const arrivals = Number(row.arrivals || 0)
-  const totalSales = serviceSales + consumeSales + cashSales + upgradeSales
+  const calculatedTotalSales = serviceSales + consumeSales + cashSales + upsellAmount
+  const totalSales = row.total_sales == null ? calculatedTotalSales : Number(row.total_sales || 0)
   return {
     id: row.id,
     date: row.date || '',
@@ -150,26 +151,34 @@ export function fromPerformanceReport(row) {
     cashSales,
     newCustomers: Number(row.new_customers || 0),
     repeatCustomers: Number(row.repeat_customers || 0),
-    upgradeSales,
+    upsellAmount,
     totalSales,
-    averageOrder: arrivals > 0 ? totalSales / arrivals : 0,
+    unitPrice: row.unit_price == null ? (arrivals > 0 ? totalSales / arrivals : 0) : Number(row.unit_price || 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
 }
 
 export function toPerformanceReport(row, profile) {
+  const serviceSales = Number(row.serviceSales || 0)
+  const consumeSales = Number(row.consumeSales || 0)
+  const cashSales = Number(row.cashSales || 0)
+  const upsellAmount = Number(row.upsellAmount || 0)
+  const arrivals = Number(row.arrivals || 0)
+  const totalSales = serviceSales + consumeSales + cashSales + upsellAmount
   return {
     date: row.date,
     store: normalizeStoreForWrite(row.store, profile?.store),
     employee: row.employee || '',
-    arrivals: Number(row.arrivals || 0),
-    service_sales: Number(row.serviceSales || 0),
-    consume_sales: Number(row.consumeSales || 0),
-    cash_sales: Number(row.cashSales || 0),
+    arrivals,
+    service_sales: serviceSales,
+    consume_sales: consumeSales,
+    cash_sales: cashSales,
     new_customers: Number(row.newCustomers || 0),
     repeat_customers: Number(row.repeatCustomers || 0),
-    upgrade_sales: Number(row.upgradeSales || 0),
+    upsell_amount: upsellAmount,
+    total_sales: totalSales,
+    unit_price: arrivals > 0 ? totalSales / arrivals : 0,
     updated_at: new Date().toISOString(),
   }
 }

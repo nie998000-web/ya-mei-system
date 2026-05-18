@@ -82,7 +82,9 @@ create table if not exists public.employee_performance_reports (
   cash_sales numeric default 0,
   new_customers numeric default 0,
   repeat_customers numeric default 0,
-  upgrade_sales numeric default 0,
+  upsell_amount numeric default 0,
+  total_sales numeric default 0,
+  unit_price numeric default 0,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -188,7 +190,9 @@ alter table public.employee_performance_reports
   add column if not exists cash_sales numeric default 0,
   add column if not exists new_customers numeric default 0,
   add column if not exists repeat_customers numeric default 0,
-  add column if not exists upgrade_sales numeric default 0,
+  add column if not exists upsell_amount numeric default 0,
+  add column if not exists total_sales numeric default 0,
+  add column if not exists unit_price numeric default 0,
   add column if not exists created_at timestamptz default now(),
   add column if not exists updated_at timestamptz default now();
 

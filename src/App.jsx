@@ -190,7 +190,7 @@ const emptyPerformanceReport = {
   cashSales: 0,
   newCustomers: 0,
   repeatCustomers: 0,
-  upgradeSales: 0,
+  upsellAmount: 0,
 }
 
 function App() {
@@ -1510,9 +1510,9 @@ function PerformanceReportsModule({ performanceReports, employees, stores, role,
                 <Td>{money(item.cashSales)}</Td>
                 <Td>{item.newCustomers}</Td>
                 <Td>{item.repeatCustomers}</Td>
-                <Td>{money(item.upgradeSales)}</Td>
+                <Td>{money(item.upsellAmount)}</Td>
                 <Td><b className="text-[#bd1657]">{money(item.totalSales)}</b></Td>
-                <Td>{money(item.averageOrder)}</Td>
+                <Td>{money(item.unitPrice)}</Td>
                 <Td>
                   {canEditReports ? (
                     <>
@@ -1756,7 +1756,7 @@ function PerformanceReportDrawer({ data, employees, stores, profile, lockedStore
         <Field label="现金业绩"><Input type="number" value={form.cashSales} onChange={(value) => setForm({ ...form, cashSales: value })} /></Field>
         <Field label="新客人数"><Input type="number" value={form.newCustomers} onChange={(value) => setForm({ ...form, newCustomers: value })} /></Field>
         <Field label="老客复购人数"><Input type="number" value={form.repeatCustomers} onChange={(value) => setForm({ ...form, repeatCustomers: value })} /></Field>
-        <Field label="升单金额"><Input type="number" value={form.upgradeSales} onChange={(value) => setForm({ ...form, upgradeSales: value })} /></Field>
+        <Field label="升单金额"><Input type="number" value={form.upsellAmount} onChange={(value) => setForm({ ...form, upsellAmount: value })} /></Field>
       </FormGrid>
     </Drawer>
   )
