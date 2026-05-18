@@ -466,7 +466,8 @@ set search_path = public
 as $$
   select case
     when role = 'admin' then 'boss'
-    when role in ('consultant', 'technical_teacher') then 'beautician'
+    when role in ('employee', 'consultant', 'technical_teacher') then 'beautician'
+    when role = 'regional_manager' then 'boss'
     else role
   end from public.profiles where user_id = auth.uid()::text limit 1
 $$;
@@ -590,7 +591,6 @@ on public.employees for insert
 to authenticated
 with check (
   public.current_profile_role() = 'boss'
-  or (public.current_profile_role() = 'manager' and store = public.current_profile_store())
 );
 
 drop policy if exists employees_update_scope on public.employees;
@@ -599,11 +599,9 @@ on public.employees for update
 to authenticated
 using (
   public.current_profile_role() = 'boss'
-  or (public.current_profile_role() = 'manager' and store = public.current_profile_store())
 )
 with check (
   public.current_profile_role() = 'boss'
-  or (public.current_profile_role() = 'manager' and store = public.current_profile_store())
 );
 
 drop policy if exists employees_delete_scope on public.employees;
@@ -612,7 +610,6 @@ on public.employees for delete
 to authenticated
 using (
   public.current_profile_role() = 'boss'
-  or (public.current_profile_role() = 'manager' and store = public.current_profile_store())
 );
 
 drop policy if exists employee_daily_stats_select_scope on public.employee_daily_stats;
@@ -736,7 +733,9 @@ drop policy if exists project_commission_settings_select_scope on public.project
 create policy project_commission_settings_select_scope
 on public.project_commission_settings for select
 to authenticated
-using (true);
+using (
+  public.current_profile_role() = 'boss'
+);
 
 drop policy if exists project_commission_settings_insert_scope on public.project_commission_settings;
 create policy project_commission_settings_insert_scope
@@ -744,7 +743,6 @@ on public.project_commission_settings for insert
 to authenticated
 with check (
   public.current_profile_role() = 'boss'
-  or public.current_profile_role() = 'manager'
 );
 
 drop policy if exists project_commission_settings_update_scope on public.project_commission_settings;
@@ -753,11 +751,9 @@ on public.project_commission_settings for update
 to authenticated
 using (
   public.current_profile_role() = 'boss'
-  or public.current_profile_role() = 'manager'
 )
 with check (
   public.current_profile_role() = 'boss'
-  or public.current_profile_role() = 'manager'
 );
 
 drop policy if exists performance_records_select_scope on public.performance_records;

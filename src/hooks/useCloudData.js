@@ -32,7 +32,7 @@ const roleRank = {
   boss: 3,
   admin: 3,
 }
-const validRoles = ['boss', 'manager', 'beautician', 'consultant', 'director', 'regional_manager', 'technical_teacher', 'admin']
+const validRoles = ['boss', 'manager', 'employee', 'beautician', 'consultant', 'director', 'regional_manager', 'technical_teacher', 'admin']
 
 function isBossRole(role) {
   const value = String(role || '').trim().toLowerCase()
@@ -46,7 +46,7 @@ function isManagerRole(role) {
 
 function isBeauticianRole(role) {
   const value = String(role || '').trim().toLowerCase()
-  return value === 'beautician' || value === 'consultant' || value === 'technical_teacher'
+  return value === 'beautician' || value === 'employee' || value === 'consultant' || value === 'technical_teacher'
 }
 
 function isValidRole(role) {
@@ -510,7 +510,7 @@ export function useCloudData(session) {
       }
 
       if (!isValidRole(activeProfile.role)) {
-        setError('当前账号角色无效，只允许 boss、manager、beautician、consultant、director、regional_manager、technical_teacher、admin。')
+        setError('当前账号角色无效，只允许 boss、admin、manager、employee、beautician、consultant、director、regional_manager、technical_teacher。')
         setProfile(null)
         return
       }
