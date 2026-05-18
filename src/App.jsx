@@ -20,6 +20,7 @@ const navItems = [
   ['reviews', '每日复盘'],
   ['employees', '员工管理'],
   ['performanceReports', '员工业绩日报'],
+  ['performanceMonthly', '员工业绩月报'],
 ]
 
 function isBossRole(role) {
@@ -52,6 +53,12 @@ const customerImportHeaders = {
 }
 
 const activationStatusOptions = ['未跟进', '已联系', '已预约', '已到店', '无意向']
+const commissionRates = {
+  serviceSales: 0.1,
+  consumeSales: 0.05,
+  cashSales: 0.08,
+  upsellAmount: 0.1,
+}
 
 function normalizeActivationStatus(value) {
   const status = String(value || '').trim()
@@ -327,6 +334,7 @@ function App() {
         {active === 'reviews' && <ReviewsModule {...pageProps} />}
         {active === 'employees' && <EmployeesModule {...pageProps} />}
         {active === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
+        {active === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
       </main>
     </div>
   )
@@ -1549,6 +1557,172 @@ function PerformanceReportsModule({ performanceReports, employees, stores, role,
           onSave={save}
         />
       )}
+    </div>
+  )
+}
+
+function PerformanceMonthlyModule({ performanceReports, employees, stores, role, profile, performanceReportError }) {
+  const canChooseStore = isBossRole(role)
+  const isBeautician = isBeauticianRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [filters, setFilters] = useState({
+    month: todayString().slice(0, 7),
+    store: canChooseStore ? '全部门店' : fixedStore,
+    employee: isBeautician ? profile?.name || '' : '全部员工',
+  })
+  const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
+  const scopedEmployees = employees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
+  const employeeOptions = isBeautician ? [profile?.name || ''] : ['全部员工', ...unique(scopedEmployees.map((item) => item.name).filter(Boolean))]
+  const monthlySource = performanceReports.filter((item) => {
+    const monthMatch = !filters.month || String(item.date || '').startsWith(filters.month)
+    const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store
+    const employeeMatch = filters.employee === '全部员工' || item.employee === filters.employee
+    return monthMatch && storeMatch && employeeMatch
+  })
+  const monthlyRows = Object.values(monthlySource.reduce((map, item) => {
+    const key = `${normalizeStoreName(item.store)}__${item.employee}`
+    if (!map[key]) {
+      map[key] = {
+        month: filters.month,
+        store: normalizeStoreName(item.store),
+        employee: item.employee,
+        arrivals: 0,
+        serviceSales: 0,
+        consumeSales: 0,
+        cashSales: 0,
+        newCustomers: 0,
+        repeatCustomers: 0,
+        upsellAmount: 0,
+        totalSales: 0,
+      }
+    }
+    map[key].arrivals += Number(item.arrivals || 0)
+    map[key].serviceSales += Number(item.serviceSales || 0)
+    map[key].consumeSales += Number(item.consumeSales || 0)
+    map[key].cashSales += Number(item.cashSales || 0)
+    map[key].newCustomers += Number(item.newCustomers || 0)
+    map[key].repeatCustomers += Number(item.repeatCustomers || 0)
+    map[key].upsellAmount += Number(item.upsellAmount || 0)
+    map[key].totalSales += Number(item.totalSales || 0)
+    return map
+  }, {})).map((item) => {
+    const serviceCommission = item.serviceSales * commissionRates.serviceSales
+    const consumeCommission = item.consumeSales * commissionRates.consumeSales
+    const cashCommission = item.cashSales * commissionRates.cashSales
+    const upsellCommission = item.upsellAmount * commissionRates.upsellAmount
+    return {
+      ...item,
+      unitPrice: item.arrivals > 0 ? item.totalSales / item.arrivals : 0,
+      serviceCommission,
+      consumeCommission,
+      cashCommission,
+      upsellCommission,
+      totalCommission: serviceCommission + consumeCommission + cashCommission + upsellCommission,
+    }
+  }).sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
+  const monthTotalSales = monthlyRows.reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
+  const monthArrivals = monthlyRows.reduce((sum, item) => sum + Number(item.arrivals || 0), 0)
+  const monthNewCustomers = monthlyRows.reduce((sum, item) => sum + Number(item.newCustomers || 0), 0)
+  const monthUpsellAmount = monthlyRows.reduce((sum, item) => sum + Number(item.upsellAmount || 0), 0)
+  const monthUnitPrice = monthArrivals > 0 ? monthTotalSales / monthArrivals : 0
+  const storeRank = validStoreNames
+    .map((store) => {
+      const list = monthlyRows.filter((item) => item.store === store)
+      return {
+        store,
+        totalSales: list.reduce((sum, item) => sum + Number(item.totalSales || 0), 0),
+        arrivals: list.reduce((sum, item) => sum + Number(item.arrivals || 0), 0),
+      }
+    })
+    .filter((item) => canChooseStore || item.store === fixedStore)
+    .sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
+  const newCustomerRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: `${item.newCustomers}人`, amount: Number(item.newCustomers || 0), sub: money(item.totalSales) })).sort((a, b) => b.amount - a.amount)
+  const upsellRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: money(item.upsellAmount), amount: Number(item.upsellAmount || 0), sub: `${item.arrivals}人到店` })).sort((a, b) => b.amount - a.amount)
+  const employeeRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `提成 ${money(item.totalCommission)}` }))
+
+  return (
+    <div className="space-y-5">
+      <Panel title="员工业绩月报" subtitle="自动汇总员工业绩日报，并按默认规则计算提成">
+        {performanceReportError && <ErrorNotice>{performanceReportError}</ErrorNotice>}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+          <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
+            <div className="text-sm text-pink-100">本月总业绩</div>
+            <div className="mt-2 text-3xl font-black">{money(monthTotalSales)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">本月到店人数</div>
+            <div className="mt-2 text-3xl font-black text-[#5f263c]">{monthArrivals}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">本月新客人数</div>
+            <div className="mt-2 text-3xl font-black text-green-600">{monthNewCustomers}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">本月客单价</div>
+            <div className="mt-2 text-3xl font-black text-[#bd1657]">{money(monthUnitPrice)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">本月升单金额</div>
+            <div className="mt-2 text-3xl font-black text-orange-600">{money(monthUpsellAmount)}</div>
+          </div>
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-3">
+          <Field label="月份筛选"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
+          <Field label="门店筛选"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value, employee: isBeautician ? profile?.name || '' : '全部员工' })} options={storeOptions} disabled={!canChooseStore} /></Field>
+          <Field label="员工筛选"><Select value={filters.employee} onChange={(value) => setFilters({ ...filters, employee: value })} options={employeeOptions} disabled={isBeautician} /></Field>
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <MetricPill>手工提成 10%</MetricPill>
+          <MetricPill>消耗提成 5%</MetricPill>
+          <MetricPill>现金提成 8%</MetricPill>
+          <MetricPill>升单提成 10%</MetricPill>
+        </div>
+        <Table>
+          <thead>
+            <tr>
+              {['排名', '月份', '门店', '员工', '到店人数', '总业绩', '手工业绩', '消耗业绩', '现金业绩', '升单金额', '客单价', '总提成'].map((head) => <Th key={head}>{head}</Th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {monthlyRows.length === 0 && (
+              <tr className="border-t border-pink-50">
+                <Td colSpan={12}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工业绩月报</div></Td>
+              </tr>
+            )}
+            {monthlyRows.map((item, index) => (
+              <tr key={`${item.store}-${item.employee}`} className="border-t border-pink-50">
+                <Td><Badge tone={index === 0 ? 'danger' : 'pink'}>第{index + 1}名</Badge></Td>
+                <Td>{item.month}</Td>
+                <Td>{item.store}</Td>
+                <Td><div className="font-semibold text-[#5f263c]">{item.employee}</div></Td>
+                <Td>{item.arrivals}</Td>
+                <Td><b className="text-[#bd1657]">{money(item.totalSales)}</b></Td>
+                <Td>{money(item.serviceSales)}</Td>
+                <Td>{money(item.consumeSales)}</Td>
+                <Td>{money(item.cashSales)}</Td>
+                <Td>{money(item.upsellAmount)}</Td>
+                <Td>{money(item.unitPrice)}</Td>
+                <Td><b className="text-green-700">{money(item.totalCommission)}</b></Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Panel>
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <Panel title="本月员工业绩排行榜" subtitle="按本月总业绩从高到低">
+          <RankList rows={employeeRank} />
+        </Panel>
+        <Panel title="本月门店业绩排行榜" subtitle="按本月总业绩从高到低">
+          <RankList rows={storeRank.map((item) => ({ name: item.store, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `${item.arrivals}人到店` }))} />
+        </Panel>
+        <Panel title="本月新客排行榜" subtitle="按本月新客人数从高到低">
+          <RankList rows={newCustomerRank} />
+        </Panel>
+        <Panel title="本月升单排行榜" subtitle="按本月升单金额从高到低">
+          <RankList rows={upsellRank} />
+        </Panel>
+      </div>
     </div>
   )
 }
