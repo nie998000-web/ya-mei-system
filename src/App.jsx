@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   followMethods,
-  followStatusOptions,
   issueOptions,
   levelOptions,
   makeCustomerStatus,
@@ -49,6 +48,16 @@ const customerImportHeaders = {
   level: ['等级', '顾客等级', '客户等级', 'level'],
   birthday: ['生日', '出生日期', 'birthday'],
   lastVisit: ['最后到店时间', '最后到店日期', '最近到店日期', 'last_visit', 'lastVisit'],
+}
+
+const activationStatusOptions = ['未跟进', '已联系', '已预约', '已到店', '无意向']
+
+function normalizeActivationStatus(value) {
+  const status = String(value || '').trim()
+  if (status === '未联系') return '未跟进'
+  if (status === '已微信' || status === '已电话') return '已联系'
+  if (status === '暂不考虑' || status === '无效客户') return '无意向'
+  return activationStatusOptions.includes(status) ? status : '未跟进'
 }
 
 function splitCsvLine(line) {
@@ -109,9 +118,10 @@ const emptyCustomer = {
   owner: '',
   level: 'B客',
   lastVisit: todayString(),
-  lastFollowResult: '未联系',
+  lastFollowResult: '未跟进',
   nextFollowTime: '',
-  followStatus: '未联系',
+  followStatus: '未跟进',
+  followNote: '',
 }
 
 const emptyFollowup = {
@@ -807,19 +817,39 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
 }
 
 function ActivationModule({ customers, stores, updateCustomerStatus }) {
-  const [localStatuses, setLocalStatuses] = useState({})
+  const [drafts, setDrafts] = useState({})
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
 
-  const changeStatus = async (customer, status) => {
+  const activationCustomers = customers.filter((item) => Number(item.notVisitedDays || 0) >= 30)
+  const today = todayString()
+  const todayDueCount = activationCustomers.filter((item) => {
+    const draft = drafts[item.id] || {}
+    const status = normalizeActivationStatus(draft.followStatus || item.followStatus || item.lastFollowResult)
+    const nextFollowTime = draft.nextFollowTime ?? item.nextFollowTime
+    return status === '未跟进' || !nextFollowTime || nextFollowTime === today
+  }).length
+
+  const getDraft = (customer) => ({
+    followStatus: normalizeActivationStatus(customer.followStatus || customer.lastFollowResult),
+    nextFollowTime: customer.nextFollowTime || '',
+    followNote: customer.followNote || '',
+    ...(drafts[customer.id] || {}),
+  })
+
+  const updateDraft = (id, patch) => {
+    setDrafts((current) => ({ ...current, [id]: { ...(current[id] || {}), ...patch } }))
+  }
+
+  const saveActivation = async (customer, patch = {}) => {
     setError('')
-    setLocalStatuses((current) => ({ ...current, [customer.id]: status }))
+    const nextDraft = { ...getDraft(customer), ...patch }
+    updateDraft(customer.id, nextDraft)
     try {
-      await updateCustomerStatus(customer.id, status)
+      await updateCustomerStatus(customer.id, nextDraft)
       setToast('已更新')
       window.setTimeout(() => setToast(''), 1800)
     } catch (updateError) {
-      setLocalStatuses((current) => ({ ...current, [customer.id]: customer.followStatus || '未联系' }))
       setError(updateError.message || '更新失败')
     }
   }
@@ -844,8 +874,12 @@ function ActivationModule({ customers, stores, updateCustomerStatus }) {
     <div className="space-y-5">
       {toast && <Toast>{toast}</Toast>}
       {error && <ErrorNotice>{error}</ErrorNotice>}
-      <Panel title="各门店未到店激活统计" subtitle="老板看全部门店，店长和美容师只看到自己权限内的数据">
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
+      <Panel title="30天未到店自动激活系统" subtitle="自动筛选最后到店日期超过30天的顾客，集中安排联系、预约和回店跟进">
+        <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-5">
+          <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100 xl:col-span-1">
+            <div className="text-sm text-pink-100">今日待跟进人数</div>
+            <div className="mt-2 text-3xl font-black">{todayDueCount}</div>
+          </div>
           {storeStats.map((item) => (
             <div key={item.store} className="rounded-lg border border-pink-100 bg-pink-50 p-4">
               <div className="font-bold text-[#5f263c]">{item.store}</div>
@@ -862,42 +896,61 @@ function ActivationModule({ customers, stores, updateCustomerStatus }) {
       {groups.map(([title, hint, list]) => (
         <Panel key={title} title={`${title}未到店`} subtitle={`${hint} · ${list.length} 位顾客`}>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {list.map((item) => (
-              <div key={item.id} className={`rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50 ring-1 ring-red-100' : 'border-pink-100 bg-white'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
-                      <LevelBadge level={item.level} />
-                      <RiskBadge days={item.notVisitedDays} />
+            {list.map((item) => {
+              const draft = getDraft(item)
+              return (
+                <div key={item.id} className={`rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50 ring-1 ring-red-100' : 'border-pink-100 bg-white'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
+                        <LevelBadge level={item.level} />
+                        <RiskBadge days={item.notVisitedDays} />
+                      </div>
+                      <div className="mt-2 text-sm text-[#7b4f64]">电话：{item.phone || ''}</div>
+                      <div className="mt-1 text-sm text-[#7b4f64]">门店：{item.store || ''} · 美容师：{item.owner || ''}</div>
+                      <div className="mt-1 text-sm text-[#7b4f64]">最后到店日期：{item.lastVisit || '未记录'} · 已 {item.notVisitedDays} 天未到店</div>
+                      <div className="mt-2 rounded-md bg-white/80 px-3 py-2 text-sm text-[#674158]">上次结果：{normalizeActivationStatus(item.lastFollowResult || item.followStatus)}</div>
                     </div>
-                    <div className="mt-2 text-sm text-[#7b4f64]">{item.store} · {item.owner}</div>
-                    <div className="mt-1 text-sm text-[#7b4f64]">最后到店日期：{item.lastVisit}</div>
-                    <div className="mt-2 rounded-md bg-white/80 px-3 py-2 text-sm text-[#674158]">上次结果：{item.lastFollowResult || '未联系'}</div>
+                    <div className="text-right text-sm text-[#8a5268]">
+                      <div>下次跟进</div>
+                      <b className="text-[#bd1657]">{draft.nextFollowTime || '未定'}</b>
+                    </div>
                   </div>
-                  <div className="text-right text-sm text-[#8a5268]">
-                    <div>下次跟进</div>
-                    <b className="text-[#bd1657]">{item.nextFollowTime || '未定'}</b>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {activationStatusOptions.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => saveActivation(item, { followStatus: option })}
+                        className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
+                          draft.followStatus === option
+                            ? 'bg-[#c2185b] text-white shadow-sm'
+                            : 'bg-white text-[#8a4964] ring-1 ring-pink-100 hover:bg-pink-50'
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[190px_1fr_auto] md:items-start">
+                    <label>
+                      <span className="mb-2 block text-sm font-semibold text-[#79445b]">下次跟进日期</span>
+                      <Input type="date" value={draft.nextFollowTime} onChange={(value) => updateDraft(item.id, { nextFollowTime: value })} />
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进内容备注</span>
+                      <Textarea value={draft.followNote} onChange={(value) => updateDraft(item.id, { followNote: value })} />
+                    </label>
+                    <div className="pt-7">
+                      <PrimaryButton onClick={() => saveActivation(item)}>保存跟进</PrimaryButton>
+                    </div>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {followStatusOptions.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => changeStatus(item, option)}
-                      className={`rounded-full px-3 py-2 text-sm font-semibold transition ${
-                        (localStatuses[item.id] || item.followStatus || '未联系') === option
-                          ? 'bg-[#c2185b] text-white shadow-sm'
-                          : 'bg-white text-[#8a4964] ring-1 ring-pink-100 hover:bg-pink-50'
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </Panel>
       ))}

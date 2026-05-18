@@ -32,6 +32,7 @@ create table if not exists public.customers (
   last_follow_result text,
   last_follow_time date,
   next_follow_time date,
+  follow_note text,
   created_at timestamptz default now()
 );
 
@@ -126,6 +127,7 @@ alter table public.customers
   add column if not exists last_follow_result text,
   add column if not exists last_follow_time date,
   add column if not exists next_follow_time date,
+  add column if not exists follow_note text,
   add column if not exists created_at timestamptz default now();
 
 alter table public.employees
