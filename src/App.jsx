@@ -44,6 +44,7 @@ function roleLabel(role) {
 const emptyCustomer = {
   name: '',
   phone: '',
+  age: '',
   store: '龙泉1店',
   owner: '',
   level: 'B客',
@@ -598,7 +599,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
       subtitle="默认只显示店员最常用信息，更多内容点编辑查看"
       action={canEditCustomers ? <PrimaryButton onClick={() => {
         setFilters(defaultCustomerFilters())
-        setEditing({ name: '', phone: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
+        setEditing({ name: '', phone: '', age: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
       }}>新增顾客</PrimaryButton> : null}
     >
       {toast && <Toast>{toast}</Toast>}
@@ -629,7 +630,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
       <Table>
         <thead>
           <tr>
-            {['顾客姓名', '手机号', '负责门店', '美容师', '等级', '最后到店日期', '操作'].map((head) => (
+            {['顾客姓名', '手机号', '年龄', '负责门店', '美容师', '等级', '最后到店日期', '操作'].map((head) => (
               <Th key={head}>{head}</Th>
             ))}
           </tr>
@@ -637,7 +638,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
         <tbody>
           {filteredRows.length === 0 && (
             <tr className="border-t border-pink-50">
-              <Td colSpan={7}>
+              <Td colSpan={8}>
                 <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无顾客数据</div>
               </Td>
             </tr>
@@ -649,6 +650,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
                   <div className="font-semibold text-[#5f263c]">{item.name}</div>
                 </Td>
                 <Td>{item.phone}</Td>
+                <Td>{item.age ?? ''}</Td>
                 <Td>{item.store || ''}</Td>
                 <Td>{item.owner || ''}</Td>
                 <Td>{item.level || ''}</Td>
@@ -1104,6 +1106,7 @@ function CustomerDrawer({ data, stores, profile, lockedStore, lockedStoreValue, 
       <FormGrid>
         <Field label="顾客姓名"><Input value={customerForm.name} onChange={(value) => setCustomerForm({ ...customerForm, name: value })} /></Field>
         <Field label="手机号"><Input value={customerForm.phone} onChange={(value) => setCustomerForm({ ...customerForm, phone: value })} /></Field>
+        <Field label="年龄"><Input type="number" value={customerForm.age} onChange={(value) => setCustomerForm({ ...customerForm, age: value })} /></Field>
         <Field label="所属门店">
           {lockedStore ? (
             <LockedStoreDisplay value={fixedStore} />

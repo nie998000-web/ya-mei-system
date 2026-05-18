@@ -24,6 +24,7 @@ export function fromCustomer(row) {
     id: row.id,
     name: String(row.name ?? ''),
     phone: String(row.phone ?? ''),
+    age: row.age ?? '',
     store: storeName,
     owner: String(row.owner ?? ''),
     level: String(row.level || ''),
