@@ -182,3 +182,29 @@ export function toPerformanceReport(row, profile) {
     updated_at: new Date().toISOString(),
   }
 }
+
+export function fromStoreTarget(row) {
+  return {
+    id: row.id,
+    month: row.month || '',
+    store: normalizeStoreName(row.store),
+    monthlyTarget: Number(row.monthly_target || 0),
+    dailyTarget: Number(row.daily_target || 0),
+    currentSales: Number(row.current_sales || 0),
+    completionRate: Number(row.completion_rate || 0),
+    remainingAmount: Number(row.remaining_amount || 0),
+    createdAt: row.created_at,
+  }
+}
+
+export function toStoreTarget(row, profile) {
+  return {
+    month: row.month,
+    store: normalizeStoreForWrite(row.store, profile?.store),
+    monthly_target: Number(row.monthlyTarget || 0),
+    daily_target: Number(row.dailyTarget || 0),
+    current_sales: Number(row.currentSales || 0),
+    completion_rate: Number(row.completionRate || 0),
+    remaining_amount: Number(row.remainingAmount || 0),
+  }
+}

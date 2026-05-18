@@ -21,6 +21,7 @@ const navItems = [
   ['employees', '员工管理'],
   ['performanceReports', '员工业绩日报'],
   ['performanceMonthly', '员工业绩月报'],
+  ['storeTargets', '门店目标'],
 ]
 
 function isBossRole(role) {
@@ -250,6 +251,7 @@ function App() {
     followups: cloud.followups,
     reviews: cloud.reviews,
     performanceReports: cloud.performanceReports,
+    storeTargets: cloud.storeTargets,
     profile: cloud.profile,
     role: cloud.role,
     stores: validStoreNames,
@@ -258,6 +260,7 @@ function App() {
     employeeError: cloud.employeeError,
     dailyReviewError: cloud.dailyReviewError,
     performanceReportError: cloud.performanceReportError,
+    storeTargetError: cloud.storeTargetError,
     saveCustomer: cloud.saveCustomer,
     importCustomers: cloud.importCustomers,
     deleteCustomer: cloud.deleteCustomer,
@@ -268,6 +271,7 @@ function App() {
     deleteReview: cloud.deleteReview,
     savePerformanceReport: cloud.savePerformanceReport,
     deletePerformanceReport: cloud.deletePerformanceReport,
+    saveStoreTarget: cloud.saveStoreTarget,
     saveEmployee: cloud.saveEmployee,
     deleteEmployee: cloud.deleteEmployee,
     setActive,
@@ -335,6 +339,7 @@ function App() {
         {active === 'employees' && <EmployeesModule {...pageProps} />}
         {active === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
         {active === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
+        {active === 'storeTargets' && <StoreTargetsModule {...pageProps} />}
       </main>
     </div>
   )
@@ -1727,6 +1732,187 @@ function PerformanceMonthlyModule({ performanceReports, employees, stores, role,
   )
 }
 
+function StoreTargetsModule({ performanceReports, storeTargets, stores, role, profile, storeTargetError, saveStoreTarget }) {
+  const canChooseStore = isBossRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [filters, setFilters] = useState({
+    month: todayString().slice(0, 7),
+    store: canChooseStore ? '全部门店' : fixedStore,
+  })
+  const [draftTargets, setDraftTargets] = useState({})
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+  const today = todayString()
+  const activeMonth = filters.month || today.slice(0, 7)
+  const currentDate = new Date(`${activeMonth}-01T00:00:00`)
+  const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate()
+  const isCurrentMonth = today.startsWith(activeMonth)
+  const elapsedDays = isCurrentMonth ? Math.min(Number(today.slice(8, 10)), daysInMonth) : daysInMonth
+  const remainingDays = Math.max(daysInMonth - elapsedDays + 1, 1)
+  const visibleStores = (filters.store === '全部门店' ? validStoreNames : [filters.store]).filter((store) => canChooseStore || store === fixedStore)
+  const monthReports = performanceReports.filter((item) => String(item.date || '').startsWith(activeMonth))
+  const targetOf = (store) => storeTargets.find((item) => item.month === activeMonth && normalizeStoreName(item.store) === store)
+  const salesOf = (store, matcher) => monthReports
+    .filter((item) => normalizeStoreName(item.store) === store && (!matcher || matcher(item)))
+    .reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
+  const storesData = visibleStores.map((store) => {
+    const target = targetOf(store)
+    const monthlyTarget = Number(draftTargets[store] ?? target?.monthlyTarget ?? 0)
+    const currentSales = salesOf(store)
+    const todaySales = salesOf(store, (item) => item.date === today)
+    const dailyTarget = monthlyTarget > 0 ? monthlyTarget / daysInMonth : 0
+    const completionRate = monthlyTarget > 0 ? (currentSales / monthlyTarget) * 100 : 0
+    const remainingAmount = Math.max(monthlyTarget - currentSales, 0)
+    const projectedSales = elapsedDays > 0 ? (currentSales / elapsedDays) * daysInMonth : 0
+    const expectedProgress = monthlyTarget > 0 ? (elapsedDays / daysInMonth) * 100 : 0
+    const start = new Date(`${activeMonth}-01T00:00:00`)
+    const dates = Array.from({ length: Math.min(3, elapsedDays) }, (_, index) => {
+      const date = new Date(start)
+      date.setDate(elapsedDays - index)
+      return date.toISOString().slice(0, 10)
+    })
+    const lowThreeDays = dates.length === 3 && dates.every((date) => salesOf(store, (item) => item.date === date) < dailyTarget)
+    const last7 = monthReports.filter((item) => normalizeStoreName(item.store) === store && Number(String(item.date || '').slice(8, 10)) > elapsedDays - 7)
+      .reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
+    const prev7 = monthReports.filter((item) => {
+      const day = Number(String(item.date || '').slice(8, 10))
+      return normalizeStoreName(item.store) === store && day <= elapsedDays - 7 && day > elapsedDays - 14
+    }).reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
+    return {
+      store,
+      monthlyTarget,
+      currentSales,
+      todaySales,
+      dailyTarget,
+      todayRequired: Math.max(remainingAmount / remainingDays, dailyTarget),
+      completionRate,
+      remainingAmount,
+      projectedSales,
+      expectedProgress,
+      lowThreeDays,
+      growthAmount: last7 - prev7,
+    }
+  })
+  const totalTarget = storesData.reduce((sum, item) => sum + item.monthlyTarget, 0)
+  const totalSales = storesData.reduce((sum, item) => sum + item.currentSales, 0)
+  const totalCompletionRate = totalTarget > 0 ? (totalSales / totalTarget) * 100 : 0
+  const todayRequired = storesData.reduce((sum, item) => sum + item.todayRequired, 0)
+  const todayActual = storesData.reduce((sum, item) => sum + item.todaySales, 0)
+  const completionRank = [...storesData].sort((a, b) => b.completionRate - a.completionRate)
+  const salesRank = [...storesData].sort((a, b) => b.currentSales - a.currentSales)
+  const growthRank = [...storesData].sort((a, b) => b.growthAmount - a.growthAmount)
+  const warnings = storesData.flatMap((item) => {
+    const list = []
+    if (item.monthlyTarget > 0 && item.completionRate + 0.1 < item.expectedProgress) list.push(`${item.store} 低于本月进度`)
+    if (item.lowThreeDays) list.push(`${item.store} 连续3天未达标`)
+    if (item.completionRate >= 90 && item.completionRate < 100) list.push(`${item.store} 接近目标`)
+    return list
+  })
+  const colorOf = (rate) => rate < 60 ? 'text-red-600 bg-red-50 border-red-100' : rate < 80 ? 'text-orange-600 bg-orange-50 border-orange-100' : 'text-green-700 bg-green-50 border-green-100'
+
+  const showToast = (message) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const saveTarget = async (item) => {
+    setError('')
+    try {
+      await saveStoreTarget({
+        month: activeMonth,
+        store: item.store,
+        monthlyTarget: item.monthlyTarget,
+        dailyTarget: item.dailyTarget,
+        currentSales: item.currentSales,
+        completionRate: item.completionRate,
+        remainingAmount: item.remainingAmount,
+      })
+      showToast('保存成功')
+    } catch (saveError) {
+      setError(saveError.message || '保存失败')
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <Panel title="门店目标管理" subtitle="按月目标追踪门店完成率、日目标、预估月底业绩和经营预警">
+        {toast && <Toast>{toast}</Toast>}
+        {(error || storeTargetError) && <ErrorNotice>{error || storeTargetError}</ErrorNotice>}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+          <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
+            <div className="text-sm text-pink-100">全部门店总目标</div>
+            <div className="mt-2 text-3xl font-black">{money(totalTarget)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">全部已完成业绩</div>
+            <div className="mt-2 text-3xl font-black text-[#5f263c]">{money(totalSales)}</div>
+          </div>
+          <div className={`rounded-lg border p-4 ${colorOf(totalCompletionRate)}`}>
+            <div className="text-sm">总完成率</div>
+            <div className="mt-2 text-3xl font-black">{totalCompletionRate.toFixed(1)}%</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">今日应完成金额</div>
+            <div className="mt-2 text-3xl font-black text-orange-600">{money(todayRequired)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">今日实际完成金额</div>
+            <div className="mt-2 text-3xl font-black text-green-700">{money(todayActual)}</div>
+          </div>
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+          <Field label="月份切换"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
+          <Field label="门店筛选"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value })} options={canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]} disabled={!canChooseStore} /></Field>
+        </div>
+        {warnings.length > 0 && (
+          <div className="mb-4 rounded-lg border border-orange-100 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-700">
+            {warnings.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {storesData.map((item) => (
+            <div key={item.store} className="rounded-lg border border-pink-100 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-lg font-bold text-[#5f263c]">{item.store}</div>
+                  <div className="mt-2 text-sm text-[#9a6078]">当前进度：{item.completionRate.toFixed(1)}% / 时间进度：{item.expectedProgress.toFixed(1)}%</div>
+                </div>
+                <Badge tone={item.completionRate < 60 ? 'danger' : item.completionRate < 80 ? 'warning' : 'success'}>{item.completionRate.toFixed(1)}%</Badge>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                <MetricBox label="当前完成" value={money(item.currentSales)} />
+                <MetricBox label="剩余金额" value={money(item.remainingAmount)} />
+                <MetricBox label="今日目标" value={money(item.todayRequired)} />
+                <MetricBox label="今日完成" value={money(item.todaySales)} />
+                <MetricBox label="日均目标" value={money(item.dailyTarget)} />
+                <MetricBox label="预计月底业绩" value={money(item.projectedSales)} />
+              </div>
+              <div className="mt-4 h-3 overflow-hidden rounded-full bg-pink-50">
+                <div className={`h-full rounded-full ${item.completionRate < 60 ? 'bg-red-500' : item.completionRate < 80 ? 'bg-orange-400' : 'bg-green-500'}`} style={{ width: `${Math.min(item.completionRate, 100)}%` }} />
+              </div>
+              <div className="mt-4 flex flex-col gap-3 md:flex-row">
+                <Input type="number" value={item.monthlyTarget} onChange={(value) => setDraftTargets({ ...draftTargets, [item.store]: value })} placeholder="月目标" />
+                <PrimaryButton onClick={() => saveTarget(item)}>保存目标</PrimaryButton>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+        <Panel title="门店完成率排行榜" subtitle="按目标完成率排序">
+          <RankList rows={completionRank.map((item) => ({ name: item.store, value: `${item.completionRate.toFixed(1)}%`, amount: item.completionRate, sub: money(item.currentSales) }))} />
+        </Panel>
+        <Panel title="门店业绩排行榜" subtitle="按本月累计业绩排序">
+          <RankList rows={salesRank.map((item) => ({ name: item.store, value: money(item.currentSales), amount: item.currentSales, sub: `目标 ${money(item.monthlyTarget)}` }))} />
+        </Panel>
+        <Panel title="门店增长排行榜" subtitle="近7天较前7天增长">
+          <RankList rows={growthRank.map((item) => ({ name: item.store, value: money(item.growthAmount), amount: Math.max(item.growthAmount, 0), sub: `预计 ${money(item.projectedSales)}` }))} />
+        </Panel>
+      </div>
+    </div>
+  )
+}
+
 function LockedStoreDisplay({ value }) {
   return (
     <div className="w-full rounded-lg border border-pink-100 bg-pink-50 px-5 py-4 text-base font-semibold text-[#8a4964]">
@@ -2129,6 +2315,15 @@ function RiskBadge({ days }) {
 
 function MetricPill({ children }) {
   return <span className="inline-block rounded-full bg-white px-3 py-1 font-bold text-[#c2185b] ring-1 ring-pink-100">{children}</span>
+}
+
+function MetricBox({ label, value }) {
+  return (
+    <div className="rounded-lg bg-pink-50 px-3 py-3">
+      <div className="text-xs text-[#9a6078]">{label}</div>
+      <div className="mt-1 font-black text-[#5f263c]">{value}</div>
+    </div>
+  )
 }
 
 function QuickButton({ children, onClick }) {
