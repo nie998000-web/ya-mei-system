@@ -40,9 +40,9 @@ function isValidRole(role) {
   return validRoles.includes(String(role || '').trim().toLowerCase())
 }
 
-const customerRequiredFields = ['name', 'phone', 'age', 'store', 'owner', 'level', 'last_visit']
+const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
-const customerSelectFields = 'id,name,phone,age,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,created_at'
+const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,created_at'
 const employeeSelectFields = 'id,name,phone,store,role,note,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
@@ -405,6 +405,7 @@ export function useCloudData(session) {
       name: row.name || '',
       phone: row.phone || '',
       age: row.age === '' || row.age == null ? null : Number(row.age),
+      birthday: row.birthday || null,
       store: storeName,
       owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
       level: row.level || '',

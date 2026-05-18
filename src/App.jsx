@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   followMethods,
   followStatusOptions,
@@ -10,7 +10,7 @@ import {
 import { canManage, useCloudData } from './hooks/useCloudData'
 import { normalizeStoreName, validStoreNames } from './lib/mappers'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-import { daysSince, percent, todayString } from './utils/date'
+import { ageFromBirthday, daysSince, normalizeDateInput, percent, todayString } from './utils/date'
 import { money } from './utils/format'
 
 const navItems = [
@@ -41,10 +41,70 @@ function roleLabel(role) {
   return labels[role] || role || ''
 }
 
+const customerImportHeaders = {
+  name: ['姓名', '顾客姓名', '客户姓名', 'name'],
+  phone: ['手机号', '电话', '手机', 'phone'],
+  store: ['门店', '所属门店', 'store'],
+  owner: ['美容师', '负责美容师', '跟进人', 'owner'],
+  level: ['等级', '顾客等级', '客户等级', 'level'],
+  birthday: ['生日', '出生日期', 'birthday'],
+  lastVisit: ['最后到店时间', '最后到店日期', '最近到店日期', 'last_visit', 'lastVisit'],
+}
+
+function splitCsvLine(line) {
+  const cells = []
+  let current = ''
+  let quoted = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    const next = line[index + 1]
+    if (char === '"' && quoted && next === '"') {
+      current += '"'
+      index += 1
+    } else if (char === '"') {
+      quoted = !quoted
+    } else if (char === ',' && !quoted) {
+      cells.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  cells.push(current.trim())
+  return cells
+}
+
+function parseCustomerImportText(text) {
+  const lines = String(text || '').split(/\r?\n/).filter((line) => line.trim())
+  if (lines.length < 2) return []
+  const delimiter = lines[0].includes('\t') ? '\t' : ','
+  const parseLine = (line) => delimiter === '\t' ? line.split('\t').map((cell) => cell.trim()) : splitCsvLine(line)
+  const headers = parseLine(lines[0])
+  const findIndex = (names) => headers.findIndex((header) => names.includes(String(header || '').trim()))
+
+  return lines.slice(1).map((line) => {
+    const cells = parseLine(line)
+    const valueOf = (field) => {
+      const index = findIndex(customerImportHeaders[field])
+      return index >= 0 ? String(cells[index] || '').trim() : ''
+    }
+    return {
+      name: valueOf('name'),
+      phone: valueOf('phone'),
+      store: normalizeStoreName(valueOf('store')) || valueOf('store'),
+      owner: valueOf('owner'),
+      level: valueOf('level'),
+      birthday: normalizeDateInput(valueOf('birthday')),
+      lastVisit: normalizeDateInput(valueOf('lastVisit')),
+    }
+  }).filter((row) => row.name || row.phone)
+}
+
 const emptyCustomer = {
   name: '',
   phone: '',
   age: '',
+  birthday: '',
   store: '龙泉1店',
   owner: '',
   level: 'B客',
@@ -532,8 +592,17 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const [filters, setFilters] = useState(defaultCustomerFilters)
+  const importInputRef = useRef(null)
 
   const rows = customers || []
+  const currentMonth = new Date().getMonth() + 1
+  const birthdayCustomers = rows
+    .filter((item) => {
+      if (!item.birthday) return false
+      const [, month] = String(item.birthday).split('-').map(Number)
+      return month === currentMonth
+    })
+    .sort((a, b) => String(a.birthday || '').slice(5).localeCompare(String(b.birthday || '').slice(5)))
   const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
   const isAll = (value, allLabels = []) => value === undefined || value === null || value === '' || value === 'all' || allLabels.includes(value)
   const filteredRows = rows.filter((item) => {
@@ -582,6 +651,33 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
     setEditing(null)
   }
 
+  const importCustomers = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setError('')
+    try {
+      if (/\.xlsx$/i.test(file.name)) {
+        throw new Error('当前版本请先在 Excel 中另存为 CSV 格式后导入。')
+      }
+      const text = await file.text()
+      const importedRows = parseCustomerImportText(text)
+      if (importedRows.length === 0) throw new Error('没有识别到可导入的顾客数据，请检查表头。')
+      for (const row of importedRows) {
+        await saveCustomer({
+          ...row,
+          store: canChooseStore ? row.store : fixedStore,
+          owner: isBeauticianRole(role) ? profile?.name || '' : row.owner,
+        })
+      }
+      setFilters(defaultCustomerFilters())
+      showToast(`成功导入 ${importedRows.length} 位顾客`)
+    } catch (importError) {
+      setError(importError.message || '导入失败')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   const remove = async (item) => {
     if (!window.confirm(`确认删除顾客「${item.name || item.phone || item.id}」吗？`)) return
     setError('')
@@ -597,13 +693,39 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
     <Panel
       title="顾客档案"
       subtitle="默认只显示店员最常用信息，更多内容点编辑查看"
-      action={canEditCustomers ? <PrimaryButton onClick={() => {
-        setFilters(defaultCustomerFilters())
-        setEditing({ name: '', phone: '', age: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
-      }}>新增顾客</PrimaryButton> : null}
+      action={canEditCustomers ? (
+        <div className="flex gap-2">
+          <input ref={importInputRef} type="file" accept=".csv,.txt,.xls" onChange={importCustomers} className="hidden" />
+          <SecondaryButton onClick={() => importInputRef.current?.click()}>批量导入</SecondaryButton>
+          <PrimaryButton onClick={() => {
+            setFilters(defaultCustomerFilters())
+            setEditing({ name: '', phone: '', age: '', birthday: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
+          }}>新增顾客</PrimaryButton>
+        </div>
+      ) : null}
     >
       {toast && <Toast>{toast}</Toast>}
       {(error || customerError) && <ErrorNotice>{error || customerError}</ErrorNotice>}
+      <div className="mb-4 rounded-lg border border-pink-100 bg-pink-50/80 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="font-bold text-[#641631]">本月生日顾客</div>
+            <div className="mt-1 text-sm text-[#9a6078]">本月共 {birthdayCustomers.length} 位顾客生日</div>
+          </div>
+        </div>
+        {birthdayCustomers.length === 0 ? (
+          <div className="text-sm text-[#8a4964]">暂无本月生日顾客</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {birthdayCustomers.slice(0, 8).map((item) => (
+              <div key={item.id} className="rounded-lg bg-white px-3 py-3 text-sm text-[#674158]">
+                <div className="font-bold text-[#5f263c]">{item.name}</div>
+                <div className="mt-1">{item.birthday} · {ageFromBirthday(item.birthday)}岁</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <FilterBar>
         <Select
           value={filters.status}
@@ -630,7 +752,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
       <Table>
         <thead>
           <tr>
-            {['顾客姓名', '手机号', '年龄', '负责门店', '美容师', '等级', '最后到店日期', '操作'].map((head) => (
+            {['顾客姓名', '手机号', '生日', '年龄', '负责门店', '美容师', '等级', '最后到店日期', '操作'].map((head) => (
               <Th key={head}>{head}</Th>
             ))}
           </tr>
@@ -638,7 +760,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
         <tbody>
           {filteredRows.length === 0 && (
             <tr className="border-t border-pink-50">
-              <Td colSpan={8}>
+              <Td colSpan={9}>
                 <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无顾客数据</div>
               </Td>
             </tr>
@@ -650,7 +772,8 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
                   <div className="font-semibold text-[#5f263c]">{item.name}</div>
                 </Td>
                 <Td>{item.phone}</Td>
-                <Td>{item.age ?? ''}</Td>
+                <Td>{item.birthday || ''}</Td>
+                <Td>{ageFromBirthday(item.birthday)}</Td>
                 <Td>{item.store || ''}</Td>
                 <Td>{item.owner || ''}</Td>
                 <Td>{item.level || ''}</Td>
@@ -1106,7 +1229,7 @@ function CustomerDrawer({ data, stores, profile, lockedStore, lockedStoreValue, 
       <FormGrid>
         <Field label="顾客姓名"><Input value={customerForm.name} onChange={(value) => setCustomerForm({ ...customerForm, name: value })} /></Field>
         <Field label="手机号"><Input value={customerForm.phone} onChange={(value) => setCustomerForm({ ...customerForm, phone: value })} /></Field>
-        <Field label="年龄"><Input type="number" value={customerForm.age} onChange={(value) => setCustomerForm({ ...customerForm, age: value })} /></Field>
+        <Field label="生日"><Input type="date" value={customerForm.birthday} onChange={(value) => setCustomerForm({ ...customerForm, birthday: value })} /></Field>
         <Field label="所属门店">
           {lockedStore ? (
             <LockedStoreDisplay value={fixedStore} />
@@ -1364,6 +1487,10 @@ function Select({ value, onChange, options, disabled = false }) {
 
 function PrimaryButton({ children, onClick }) {
   return <button onClick={onClick} className="rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d]">{children}</button>
+}
+
+function SecondaryButton({ children, onClick }) {
+  return <button onClick={onClick} className="rounded-lg border border-pink-100 bg-white px-5 py-3 font-semibold text-[#c2185b] shadow-sm transition hover:bg-pink-50">{children}</button>
 }
 
 function ActionButton({ children, onClick, tone = 'normal' }) {
