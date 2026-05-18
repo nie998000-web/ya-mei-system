@@ -816,19 +816,39 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
   )
 }
 
-function ActivationModule({ customers, stores, updateCustomerStatus }) {
+function ActivationModule({ customers, stores, profile, role, updateCustomerStatus }) {
   const [drafts, setDrafts] = useState({})
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
+  const canChooseStore = isBossRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [filters, setFilters] = useState({
+    store: canChooseStore ? '全部门店' : fixedStore,
+    owner: '全部美容师',
+    level: '全部等级',
+  })
 
   const activationCustomers = customers.filter((item) => Number(item.notVisitedDays || 0) >= 30)
+  const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
+  const storeFilteredCustomers = activationCustomers.filter((item) => filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store)
+  const ownerOptions = ['全部美容师', ...unique(storeFilteredCustomers.map((item) => item.owner).filter(Boolean))]
+  const levelFilterOptions = ['全部等级', ...levelOptions]
+  const filteredCustomers = storeFilteredCustomers.filter((item) => {
+    const ownerMatch = filters.owner === '全部美容师' || item.owner === filters.owner
+    const levelMatch = filters.level === '全部等级' || item.level === filters.level
+    return ownerMatch && levelMatch
+  })
   const today = todayString()
-  const todayDueCount = activationCustomers.filter((item) => {
+  const statusOf = (item) => normalizeActivationStatus((drafts[item.id] || {}).followStatus || item.followStatus || item.lastFollowResult)
+  const todayDueCount = filteredCustomers.filter((item) => {
     const draft = drafts[item.id] || {}
-    const status = normalizeActivationStatus(draft.followStatus || item.followStatus || item.lastFollowResult)
+    const status = statusOf(item)
     const nextFollowTime = draft.nextFollowTime ?? item.nextFollowTime
     return status === '未跟进' || !nextFollowTime || nextFollowTime === today
   }).length
+  const contactedCount = filteredCustomers.filter((item) => statusOf(item) === '已联系').length
+  const appointmentCount = filteredCustomers.filter((item) => statusOf(item) === '已预约').length
+  const arrivedCount = filteredCustomers.filter((item) => statusOf(item) === '已到店').length
 
   const getDraft = (customer) => ({
     followStatus: normalizeActivationStatus(customer.followStatus || customer.lastFollowResult),
@@ -854,20 +874,10 @@ function ActivationModule({ customers, stores, updateCustomerStatus }) {
     }
   }
 
-  const storeStats = stores.map((store) => {
-    const list = customers.filter((item) => item.store === store)
-    return {
-      store,
-      total: list.filter((item) => item.notVisitedDays >= 30).length,
-      risk90: list.filter((item) => item.notVisitedDays >= 90).length,
-      risk60: list.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90).length,
-      risk30: list.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60).length,
-    }
-  })
   const groups = [
-    ['90天以上', '高风险，建议店长亲自盯', customers.filter((item) => item.notVisitedDays >= 90)],
-    ['60-89天', '重点挽回，先约护理体验', customers.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90)],
-    ['30-59天', '正常唤醒，美容师当天处理', customers.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60)],
+    ['90天以上', '高风险，建议店长亲自盯', filteredCustomers.filter((item) => item.notVisitedDays >= 90)],
+    ['60-89天', '重点挽回，先约护理体验', filteredCustomers.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90)],
+    ['30-59天', '正常唤醒，美容师当天处理', filteredCustomers.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60)],
   ]
 
   return (
@@ -875,22 +885,34 @@ function ActivationModule({ customers, stores, updateCustomerStatus }) {
       {toast && <Toast>{toast}</Toast>}
       {error && <ErrorNotice>{error}</ErrorNotice>}
       <Panel title="30天未到店自动激活系统" subtitle="自动筛选最后到店日期超过30天的顾客，集中安排联系、预约和回店跟进">
-        <div className="mb-4 grid grid-cols-1 gap-3 xl:grid-cols-5">
-          <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100 xl:col-span-1">
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
             <div className="text-sm text-pink-100">今日待跟进人数</div>
             <div className="mt-2 text-3xl font-black">{todayDueCount}</div>
           </div>
-          {storeStats.map((item) => (
-            <div key={item.store} className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-              <div className="font-bold text-[#5f263c]">{item.store}</div>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-center text-sm text-[#7b4f64]">
-                <div><b className="block text-xl text-[#bd1657]">{item.total}</b>总数</div>
-                <div><b className="block text-xl text-red-600">{item.risk90}</b>90天</div>
-                <div><b className="block text-xl text-orange-600">{item.risk60}</b>60天</div>
-                <div><b className="block text-xl text-[#bd1657]">{item.risk30}</b>30天</div>
-              </div>
-            </div>
-          ))}
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">已联系人数</div>
+            <div className="mt-2 text-3xl font-black text-[#5f263c]">{contactedCount}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">已预约人数</div>
+            <div className="mt-2 text-3xl font-black text-green-600">{appointmentCount}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">已到店人数</div>
+            <div className="mt-2 text-3xl font-black text-[#bd1657]">{arrivedCount}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-3">
+          <Field label="门店筛选">
+            <Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value, owner: '全部美容师' })} options={storeOptions} disabled={!canChooseStore} />
+          </Field>
+          <Field label="美容师筛选">
+            <Select value={filters.owner} onChange={(value) => setFilters({ ...filters, owner: value })} options={ownerOptions} />
+          </Field>
+          <Field label="等级筛选">
+            <Select value={filters.level} onChange={(value) => setFilters({ ...filters, level: value })} options={levelFilterOptions} />
+          </Field>
         </div>
       </Panel>
       {groups.map(([title, hint, list]) => (
