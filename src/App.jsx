@@ -669,7 +669,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
         owner: isBeauticianRole(role) ? profile?.name || '' : row.owner,
       })))
       setFilters(defaultCustomerFilters())
-      showToast(`成功处理 ${result.saved} 位顾客，已按手机号自动更新/新增`)
+      showToast(`导入完成：新增 ${result.created} 位，更新 ${result.updated} 位，跳过 ${result.skipped} 位`)
     } catch (importError) {
       setError(importError.message || '导入失败')
     } finally {

@@ -238,13 +238,16 @@ create index if not exists idx_customers_store on public.customers (store);
 create index if not exists idx_customers_owner on public.customers (owner);
 create index if not exists idx_customers_last_visit on public.customers (last_visit);
 drop index if exists public.idx_customers_phone;
+drop index if exists public.idx_customers_phone_unique;
+update public.customers
+set phone = null
+where phone = '';
 delete from public.customers a
 using public.customers b
 where a.phone is not null
-  and a.phone <> ''
   and a.phone = b.phone
   and a.id < b.id;
-create unique index if not exists idx_customers_phone_unique on public.customers (phone) where phone is not null and phone <> '';
+create unique index if not exists idx_customers_phone_unique on public.customers (phone);
 create index if not exists idx_employees_store on public.employees (store);
 create index if not exists idx_employees_role on public.employees (role);
 create index if not exists idx_employees_name on public.employees (name);

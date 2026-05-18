@@ -427,35 +427,60 @@ export function useCloudData(session) {
   }
 
   const importCustomers = async (rows) => {
-    const payloads = (rows || [])
-      .map((row) => {
-        const phone = String(row.phone || '').trim()
-        if (!phone) return null
-        return {
-          name: row.name || '',
-          phone,
-          age: row.age === '' || row.age == null ? null : Number(row.age),
-          birthday: row.birthday || null,
-          store: writeStoreForProfile(row.store, profile),
-          owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
-          level: row.level || '',
-          last_visit: row.lastVisit || null,
-        }
-      })
-      .filter(Boolean)
+    const normalizedRows = (rows || []).map((row) => ({
+      name: row.name || '',
+      phone: String(row.phone || '').trim(),
+      age: row.age === '' || row.age == null ? null : Number(row.age),
+      birthday: row.birthday || null,
+      store: writeStoreForProfile(row.store, profile),
+      owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
+      level: row.level || '',
+      last_visit: row.lastVisit || null,
+    }))
+    const skippedBlankPhone = normalizedRows.filter((row) => !row.phone).length
+    const rowsWithPhone = normalizedRows.filter((row) => row.phone)
 
-    if (payloads.length === 0) throw new Error('导入数据必须包含手机号。')
+    if (rowsWithPhone.length === 0) throw new Error('导入数据必须包含手机号。')
 
-    const dedupedByPhone = [...new Map(payloads.map((row) => [row.phone, row])).values()]
-    const { data, error: importError } = await supabase
+    const dedupedByPhone = [...new Map(rowsWithPhone.map((row) => [row.phone, row])).values()]
+    const skippedDuplicateInFile = rowsWithPhone.length - dedupedByPhone.length
+    const phones = dedupedByPhone.map((row) => row.phone)
+    const { data: existingRows, error: existingError } = await supabase
       .from('customers')
-      .upsert(dedupedByPhone, { onConflict: 'phone' })
-      .select(customerSelectFields)
+      .select('id,phone')
+      .in('phone', phones)
 
-    if (importError) throw new Error(customerSchemaError(importError))
-    setCustomers((data || []).map(fromCustomer))
+    if (existingError) throw new Error(errorMessage(existingError))
+
+    const existingByPhone = new Map((existingRows || []).map((row) => [row.phone, row.id]))
+    const updateRows = dedupedByPhone
+      .filter((row) => existingByPhone.has(row.phone))
+      .map((row) => ({ id: existingByPhone.get(row.phone), ...row }))
+    const insertRows = dedupedByPhone.filter((row) => !existingByPhone.has(row.phone))
+
+    for (const row of updateRows) {
+      const { id, ...payload } = row
+      const { error: updateError } = await supabase
+        .from('customers')
+        .update(payload)
+        .eq('id', id)
+      if (updateError) throw new Error(customerSchemaError(updateError))
+    }
+
+    if (insertRows.length > 0) {
+      const { error: insertError } = await supabase
+        .from('customers')
+        .insert(insertRows)
+      if (insertError) throw new Error(customerSchemaError(insertError))
+    }
+
     await loadCustomers(profile)
-    return { total: rows.length, saved: dedupedByPhone.length }
+    return {
+      total: rows.length,
+      created: insertRows.length,
+      updated: updateRows.length,
+      skipped: skippedBlankPhone + skippedDuplicateInFile,
+    }
   }
 
   const deleteCustomer = async (id) => {

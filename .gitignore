@@ -3,3 +3,5 @@ dist
 .DS_Store
 .env
 .env.local
+wanda-customers.csv
+update_birthdays.sql
