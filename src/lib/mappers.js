@@ -131,3 +131,45 @@ export function toReview(row, profile) {
     tomorrow_action: row.tomorrowAction || '',
   }
 }
+
+export function fromPerformanceReport(row) {
+  const serviceSales = Number(row.service_sales || 0)
+  const consumeSales = Number(row.consume_sales || 0)
+  const cashSales = Number(row.cash_sales || 0)
+  const upgradeSales = Number(row.upgrade_sales || 0)
+  const arrivals = Number(row.arrivals || 0)
+  const totalSales = serviceSales + consumeSales + cashSales + upgradeSales
+  return {
+    id: row.id,
+    date: row.date || '',
+    store: normalizeStoreName(row.store),
+    employee: row.employee || '',
+    arrivals,
+    serviceSales,
+    consumeSales,
+    cashSales,
+    newCustomers: Number(row.new_customers || 0),
+    repeatCustomers: Number(row.repeat_customers || 0),
+    upgradeSales,
+    totalSales,
+    averageOrder: arrivals > 0 ? totalSales / arrivals : 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function toPerformanceReport(row, profile) {
+  return {
+    date: row.date,
+    store: normalizeStoreForWrite(row.store, profile?.store),
+    employee: row.employee || '',
+    arrivals: Number(row.arrivals || 0),
+    service_sales: Number(row.serviceSales || 0),
+    consume_sales: Number(row.consumeSales || 0),
+    cash_sales: Number(row.cashSales || 0),
+    new_customers: Number(row.newCustomers || 0),
+    repeat_customers: Number(row.repeatCustomers || 0),
+    upgrade_sales: Number(row.upgradeSales || 0),
+    updated_at: new Date().toISOString(),
+  }
+}
