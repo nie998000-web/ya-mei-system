@@ -1661,6 +1661,17 @@ function StatusPill({ children, tone }) {
   return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1 ${styles[tone] || styles.light}`}>{children}</span>
 }
 
+function Badge({ children, tone = 'light' }) {
+  const styles = {
+    danger: 'bg-red-50 text-red-700 ring-red-100',
+    warning: 'bg-orange-50 text-orange-700 ring-orange-100',
+    success: 'bg-green-50 text-green-700 ring-green-100',
+    pink: 'bg-pink-50 text-[#bd1657] ring-pink-100',
+    light: 'bg-slate-50 text-slate-600 ring-slate-100',
+  }
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${styles[tone] || styles.light}`}>{children}</span>
+}
+
 function formatDateTime(value) {
   if (!value) return ''
   const date = new Date(value)
