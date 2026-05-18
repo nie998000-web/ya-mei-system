@@ -42,7 +42,7 @@ function isValidRole(role) {
 
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
-const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,created_at'
+const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
 const employeeSelectFields = 'id,name,phone,store,role,note,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
@@ -494,6 +494,7 @@ export function useCloudData(session) {
     const followStatus = typeof changes === 'string' ? changes : changes?.followStatus
     const nextFollowTime = typeof changes === 'string' ? undefined : changes?.nextFollowTime
     const followNote = typeof changes === 'string' ? undefined : changes?.followNote
+    const todayTaskCompletedAt = typeof changes === 'string' ? undefined : changes?.todayTaskCompletedAt
     const payload = {
       follow_status: followStatus,
       last_follow_result: followStatus,
@@ -501,6 +502,7 @@ export function useCloudData(session) {
     }
     if (nextFollowTime !== undefined) payload.next_follow_time = nextFollowTime || null
     if (followNote !== undefined) payload.follow_note = followNote || ''
+    if (todayTaskCompletedAt !== undefined) payload.today_task_completed_at = todayTaskCompletedAt || null
     if (followStatus === '已到店') payload.last_visit = today
 
     const { error: updateError } = await supabase
@@ -518,6 +520,7 @@ export function useCloudData(session) {
               lastFollowTime: today,
               nextFollowTime: nextFollowTime !== undefined ? nextFollowTime : item.nextFollowTime,
               followNote: followNote !== undefined ? followNote : item.followNote,
+              todayTaskCompletedAt: todayTaskCompletedAt !== undefined ? todayTaskCompletedAt : item.todayTaskCompletedAt,
               lastVisit: followStatus === '已到店' ? today : item.lastVisit,
             }
           : item,

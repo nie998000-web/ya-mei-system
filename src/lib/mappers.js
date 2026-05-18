@@ -35,6 +35,7 @@ export function fromCustomer(row) {
     nextFollowTime: row.next_follow_time || '',
     followStatus: row.follow_status || '未联系',
     followNote: row.follow_note || '',
+    todayTaskCompletedAt: row.today_task_completed_at || '',
   }
 }
 

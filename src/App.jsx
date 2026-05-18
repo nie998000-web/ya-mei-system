@@ -60,6 +60,13 @@ function normalizeActivationStatus(value) {
   return activationStatusOptions.includes(status) ? status : '未跟进'
 }
 
+function activationPriority(customer) {
+  const level = String(customer.level || '').trim()
+  if (Number(customer.notVisitedDays || 0) >= 90 || level === 'A客/VIP' || level === 'A类顾客') return '高'
+  if (Number(customer.notVisitedDays || 0) >= 60 || level === 'B客' || level === 'B类顾客') return '中'
+  return '低'
+}
+
 function splitCsvLine(line) {
   const cells = []
   let current = ''
@@ -122,6 +129,7 @@ const emptyCustomer = {
   nextFollowTime: '',
   followStatus: '未跟进',
   followNote: '',
+  todayTaskCompletedAt: '',
 }
 
 const emptyFollowup = {
@@ -816,7 +824,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
   )
 }
 
-function ActivationModule({ customers, stores, profile, role, updateCustomerStatus }) {
+function ActivationModule({ customers, employees, stores, profile, role, updateCustomerStatus }) {
   const [drafts, setDrafts] = useState({})
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
@@ -840,20 +848,44 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
   })
   const today = todayString()
   const statusOf = (item) => normalizeActivationStatus((drafts[item.id] || {}).followStatus || item.followStatus || item.lastFollowResult)
-  const todayDueCount = filteredCustomers.filter((item) => {
+  const isCompletedToday = (item) => formatDateOnly((drafts[item.id] || {}).todayTaskCompletedAt || item.todayTaskCompletedAt) === today
+  const isTodayTaskBase = (item) => item.notVisitedDays > 30 && item.nextFollowTime === today
+  const isTodayTask = (item) => isTodayTaskBase(item) && statusOf(item) !== '已到店'
+  const todayTaskBase = filteredCustomers.filter(isTodayTaskBase)
+  const todayTasks = todayTaskBase.filter(isTodayTask)
+  const todayDueCount = todayTasks.length
+  const completedCount = todayTasks.filter(isCompletedToday).length
+  const unfinishedCount = Math.max(todayDueCount - completedCount, 0)
+  const todayAppointmentCount = todayTasks.filter((item) => statusOf(item) === '已预约').length
+  const todayReturnRate = todayTaskBase.length > 0 ? Math.round((todayTaskBase.filter((item) => statusOf(item) === '已到店').length / todayTaskBase.length) * 100) : 0
+  const contactedCount = filteredCustomers.filter((item) => statusOf(item) === '已联系').length
+  const appointmentCount = filteredCustomers.filter((item) => statusOf(item) === '已预约').length
+  const arrivedCount = filteredCustomers.filter((item) => statusOf(item) === '已到店').length
+  const leaderboard = unique([...employees.map((item) => item.name), ...filteredCustomers.map((item) => item.owner)].filter(Boolean))
+    .map((owner) => {
+      const ownedTasks = todayTasks.filter((item) => item.owner === owner)
+      const ownedCustomers = filteredCustomers.filter((item) => item.owner === owner)
+      return {
+        owner,
+        followups: ownedTasks.filter(isCompletedToday).length,
+        appointments: ownedTasks.filter((item) => statusOf(item) === '已预约').length,
+        arrivals: ownedCustomers.filter((item) => isTodayTaskBase(item) && statusOf(item) === '已到店').length,
+      }
+    })
+    .filter((item) => item.followups || item.appointments || item.arrivals || filteredCustomers.some((customer) => customer.owner === item.owner))
+    .sort((a, b) => b.followups - a.followups || b.appointments - a.appointments || b.arrivals - a.arrivals)
+  const todayDueFallbackCount = filteredCustomers.filter((item) => {
     const draft = drafts[item.id] || {}
     const status = statusOf(item)
     const nextFollowTime = draft.nextFollowTime ?? item.nextFollowTime
     return status === '未跟进' || !nextFollowTime || nextFollowTime === today
   }).length
-  const contactedCount = filteredCustomers.filter((item) => statusOf(item) === '已联系').length
-  const appointmentCount = filteredCustomers.filter((item) => statusOf(item) === '已预约').length
-  const arrivedCount = filteredCustomers.filter((item) => statusOf(item) === '已到店').length
 
   const getDraft = (customer) => ({
     followStatus: normalizeActivationStatus(customer.followStatus || customer.lastFollowResult),
     nextFollowTime: customer.nextFollowTime || '',
     followNote: customer.followNote || '',
+    todayTaskCompletedAt: customer.todayTaskCompletedAt || '',
     ...(drafts[customer.id] || {}),
   })
 
@@ -874,10 +906,14 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
     }
   }
 
+  const completeTodayTask = (customer) => {
+    saveActivation(customer, { todayTaskCompletedAt: new Date().toISOString() })
+  }
+
   const groups = [
-    ['90天以上', '高风险，建议店长亲自盯', filteredCustomers.filter((item) => item.notVisitedDays >= 90)],
-    ['60-89天', '重点挽回，先约护理体验', filteredCustomers.filter((item) => item.notVisitedDays >= 60 && item.notVisitedDays < 90)],
-    ['30-59天', '正常唤醒，美容师当天处理', filteredCustomers.filter((item) => item.notVisitedDays >= 30 && item.notVisitedDays < 60)],
+    ['今日必须跟进', '系统按规则自动生成，建议当天处理完', todayTasks],
+    ['高风险客户池', '90天以上或高价值顾客，建议店长重点盯', filteredCustomers.filter((item) => !isTodayTask(item) && activationPriority(item) === '高')],
+    ['30天以上客户池', '已超过30天未到店但未排入今日任务', filteredCustomers.filter((item) => !isTodayTask(item) && activationPriority(item) !== '高')],
   ]
 
   return (
@@ -885,23 +921,32 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
       {toast && <Toast>{toast}</Toast>}
       {error && <ErrorNotice>{error}</ErrorNotice>}
       <Panel title="30天未到店自动激活系统" subtitle="自动筛选最后到店日期超过30天的顾客，集中安排联系、预约和回店跟进">
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
           <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
-            <div className="text-sm text-pink-100">今日待跟进人数</div>
+            <div className="text-sm text-pink-100">今日必须联系</div>
             <div className="mt-2 text-3xl font-black">{todayDueCount}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">已联系人数</div>
-            <div className="mt-2 text-3xl font-black text-[#5f263c]">{contactedCount}</div>
+            <div className="text-sm text-[#9a6078]">今日已完成</div>
+            <div className="mt-2 text-3xl font-black text-[#5f263c]">{completedCount}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">已预约人数</div>
-            <div className="mt-2 text-3xl font-black text-green-600">{appointmentCount}</div>
+            <div className="text-sm text-[#9a6078]">今日未完成</div>
+            <div className="mt-2 text-3xl font-black text-orange-600">{unfinishedCount}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">已到店人数</div>
-            <div className="mt-2 text-3xl font-black text-[#bd1657]">{arrivedCount}</div>
+            <div className="text-sm text-[#9a6078]">今日预约人数</div>
+            <div className="mt-2 text-3xl font-black text-green-600">{todayAppointmentCount}</div>
           </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">今日回店率</div>
+            <div className="mt-2 text-3xl font-black text-[#bd1657]">{todayReturnRate}%</div>
+          </div>
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <MetricPill>激活客户池：{filteredCustomers.length} 位</MetricPill>
+          <MetricPill>已联系：{contactedCount} 位 · 已预约：{appointmentCount} 位</MetricPill>
+          <MetricPill>已到店：{arrivedCount} 位 · 待安排：{todayDueFallbackCount} 位</MetricPill>
         </div>
         <div className="grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-3">
           <Field label="门店筛选">
@@ -915,11 +960,31 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
           </Field>
         </div>
       </Panel>
+      <Panel title="员工今日作战排行榜" subtitle="按今日任务完成、预约、到店情况复盘美容师执行">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          {leaderboard.map((item, index) => (
+            <div key={item.owner} className="rounded-lg border border-pink-100 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <div className="font-bold text-[#5f263c]">{index + 1}. {item.owner}</div>
+                <Badge tone={index === 0 ? 'danger' : 'pink'}>{item.followups} 跟进</Badge>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm text-[#7b4f64]">
+                <div><b className="block text-xl text-[#bd1657]">{item.followups}</b>跟进</div>
+                <div><b className="block text-xl text-green-600">{item.appointments}</b>预约</div>
+                <div><b className="block text-xl text-[#5f263c]">{item.arrivals}</b>到店</div>
+              </div>
+            </div>
+          ))}
+          {leaderboard.length === 0 && <div className="text-sm text-[#9a6078]">暂无今日作战数据</div>}
+        </div>
+      </Panel>
       {groups.map(([title, hint, list]) => (
         <Panel key={title} title={`${title}未到店`} subtitle={`${hint} · ${list.length} 位顾客`}>
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {list.map((item) => {
               const draft = getDraft(item)
+              const priority = activationPriority(item)
+              const completed = isCompletedToday(item)
               return (
                 <div key={item.id} className={`rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50 ring-1 ring-red-100' : 'border-pink-100 bg-white'}`}>
                   <div className="flex items-start justify-between gap-3">
@@ -928,6 +993,8 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
                         <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
                         <LevelBadge level={item.level} />
                         <RiskBadge days={item.notVisitedDays} />
+                        <Badge tone={priority === '高' ? 'danger' : priority === '中' ? 'warning' : 'light'}>{priority}优先级</Badge>
+                        {completed && <Badge tone="success">今日已完成</Badge>}
                       </div>
                       <div className="mt-2 text-sm text-[#7b4f64]">电话：{item.phone || ''}</div>
                       <div className="mt-1 text-sm text-[#7b4f64]">门店：{item.store || ''} · 美容师：{item.owner || ''}</div>
@@ -937,6 +1004,7 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
                     <div className="text-right text-sm text-[#8a5268]">
                       <div>下次跟进</div>
                       <b className="text-[#bd1657]">{draft.nextFollowTime || '未定'}</b>
+                      {completed && <div className="mt-1 text-xs text-green-700">{formatDateTime(draft.todayTaskCompletedAt || item.todayTaskCompletedAt)}</div>}
                     </div>
                   </div>
 
@@ -957,7 +1025,7 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
                     ))}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[190px_1fr_auto] md:items-start">
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[190px_1fr_auto_auto] md:items-start">
                     <label>
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">下次跟进日期</span>
                       <Input type="date" value={draft.nextFollowTime} onChange={(value) => updateDraft(item.id, { nextFollowTime: value })} />
@@ -968,6 +1036,9 @@ function ActivationModule({ customers, stores, profile, role, updateCustomerStat
                     </label>
                     <div className="pt-7">
                       <PrimaryButton onClick={() => saveActivation(item)}>保存跟进</PrimaryButton>
+                    </div>
+                    <div className="pt-7">
+                      <SecondaryButton onClick={() => completeTodayTask(item)}>{completed ? '已完成' : '今日已完成'}</SecondaryButton>
                     </div>
                   </div>
                 </div>

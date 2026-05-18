@@ -33,6 +33,7 @@ create table if not exists public.customers (
   last_follow_time date,
   next_follow_time date,
   follow_note text,
+  today_task_completed_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -128,6 +129,7 @@ alter table public.customers
   add column if not exists last_follow_time date,
   add column if not exists next_follow_time date,
   add column if not exists follow_note text,
+  add column if not exists today_task_completed_at timestamptz,
   add column if not exists created_at timestamptz default now();
 
 alter table public.employees
