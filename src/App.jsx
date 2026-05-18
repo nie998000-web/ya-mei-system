@@ -20,6 +20,7 @@ import {
   filterRecordsByUserPermission,
   normalizeRole,
   storeNameFromId,
+  stripSalaryFields,
   testUsers,
 } from './utils/permission'
 import {
@@ -32,6 +33,7 @@ import {
 const navItems = Object.entries(menuLabels)
 const routeToMenuKey = Object.entries(sensitiveRoutes).reduce((map, [path, key]) => ({ ...map, [path]: key }), {})
 const devRoleSwitcherEnabled = import.meta.env.DEV
+const devRoleStorageKey = 'yaMeiDevRole'
 
 function isBossRole(role) {
   const value = String(role || '').trim().toLowerCase()
@@ -231,7 +233,7 @@ function App() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [active, setActive] = useState(() => routeToMenuKey[window.location.pathname] || 'dashboard')
-  const [devUsername, setDevUsername] = useState('admin')
+  const [devUsername, setDevUsername] = useState(() => localStorage.getItem(devRoleStorageKey) || 'admin')
   const cloud = useCloudData(session)
 
   const enrichedCustomers = useMemo(
@@ -278,7 +280,7 @@ function App() {
     : realUser
   const scopedCustomers = filterRecordsByUserPermission(cloud.customers, currentUser)
   const scopedEnrichedCustomers = filterRecordsByUserPermission(enrichedCustomers, currentUser)
-  const scopedEmployees = filterRecordsByUserPermission(cloud.employees, currentUser)
+  const scopedEmployees = filterRecordsByUserPermission(cloud.employees, currentUser).map((employee) => stripSalaryFields(employee, currentUser))
   const scopedFollowups = filterRecordsByUserPermission(cloud.followups, currentUser)
   const scopedReviews = filterRecordsByUserPermission(cloud.reviews, currentUser)
   const scopedPerformanceReports = filterRecordsByUserPermission(cloud.performanceReports, currentUser)
@@ -372,7 +374,9 @@ function App() {
               <select
                 value={devUsername}
                 onChange={(event) => {
-                  setDevUsername(event.target.value)
+                  const nextUsername = event.target.value
+                  localStorage.setItem(devRoleStorageKey, nextUsername)
+                  setDevUsername(nextUsername)
                   setActive('dashboard')
                 }}
                 className="rounded-full border border-pink-100 bg-white px-4 py-2 text-sm font-semibold text-[#8a4964] shadow-sm"
