@@ -8,11 +8,15 @@ import {
   fromEmployee,
   fromFollowup,
   fromPerformanceReport,
+  fromPerformanceRecord,
+  fromProjectCommission,
   fromReview,
   fromStoreTarget,
   normalizeStoreName,
+  toEmployee,
   toFollowup,
   toPerformanceReport,
+  toProjectCommission,
   toReview,
   toStoreTarget,
 } from '../lib/mappers'
@@ -20,14 +24,19 @@ import { todayString } from '../utils/date'
 
 const roleRank = {
   beautician: 1,
+  consultant: 1,
+  technical_teacher: 1,
   manager: 2,
+  director: 2,
+  regional_manager: 2,
   boss: 3,
+  admin: 3,
 }
-const validRoles = ['boss', 'manager', 'beautician']
+const validRoles = ['boss', 'manager', 'beautician', 'consultant', 'director', 'regional_manager', 'technical_teacher', 'admin']
 
 function isBossRole(role) {
   const value = String(role || '').trim().toLowerCase()
-  return value === 'boss'
+  return value === 'boss' || value === 'admin'
 }
 
 function isManagerRole(role) {
@@ -37,7 +46,7 @@ function isManagerRole(role) {
 
 function isBeauticianRole(role) {
   const value = String(role || '').trim().toLowerCase()
-  return value === 'beautician'
+  return value === 'beautician' || value === 'consultant' || value === 'technical_teacher'
 }
 
 function isValidRole(role) {
@@ -47,9 +56,11 @@ function isValidRole(role) {
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
 const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
-const employeeSelectFields = 'id,name,phone,store,role,note,created_at,updated_at'
+const employeeSelectFields = 'id,name,phone,store,role,note,base_salary,social_security_allowance,full_attendance_bonus,seniority_salary,entry_date,is_active,is_technical_department,salary_plan_type,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
+const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,manual_commission_amount,remark,created_at,updated_at'
+const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
 const reviewSelectFields = 'id,date,store,invite_rate,appointment_rate,arrival_rate,deal_rate,deal_amount,unfinished_reason,tomorrow_action,created_at'
@@ -123,6 +134,8 @@ export function useCloudData(session) {
   const [followups, setFollowups] = useState([])
   const [reviews, setReviews] = useState([])
   const [performanceReports, setPerformanceReports] = useState([])
+  const [performanceRecords, setPerformanceRecords] = useState([])
+  const [projectCommissions, setProjectCommissions] = useState([])
   const [storeTargets, setStoreTargets] = useState([])
   const [storeNames, setStoreNames] = useState(fixedStores)
   const [loading, setLoading] = useState(true)
@@ -132,6 +145,8 @@ export function useCloudData(session) {
   const [employeeError, setEmployeeError] = useState('')
   const [dailyReviewError, setDailyReviewError] = useState('')
   const [performanceReportError, setPerformanceReportError] = useState('')
+  const [performanceRecordError, setPerformanceRecordError] = useState('')
+  const [projectCommissionError, setProjectCommissionError] = useState('')
   const [storeTargetError, setStoreTargetError] = useState('')
 
   const role = profile?.role || ''
@@ -354,6 +369,71 @@ export function useCloudData(session) {
     }
   }, [])
 
+  const loadPerformanceRecords = useCallback(async (profileData) => {
+    if (!supabase || !profileData) return false
+    setPerformanceRecordError('')
+
+    try {
+      let query = supabase
+        .from('performance_records')
+        .select(performanceRecordSelectFields)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      if (!isBossRole(profileData.role)) query = query.eq('store_name', profileStore(profileData))
+      if (isBeauticianRole(profileData.role) && profileData.name) {
+        query = query.or(`service_employee_name.eq.${profileData.name},sales_employee_name.eq.${profileData.name}`)
+      }
+
+      const { data, error: recordsError } = await query
+      if (recordsError) {
+        const message = errorMessage(recordsError)
+        console.error('performance_records 查询失败:', recordsError)
+        setPerformanceRecordError(message)
+        setPerformanceRecords([])
+        return false
+      }
+
+      setPerformanceRecords((data || []).map(fromPerformanceRecord))
+      return true
+    } catch (recordsError) {
+      const message = errorMessage(recordsError)
+      console.error('performance_records 查询异常:', recordsError)
+      setPerformanceRecordError(message)
+      setPerformanceRecords([])
+      return false
+    }
+  }, [])
+
+  const loadProjectCommissions = useCallback(async () => {
+    if (!supabase) return false
+    setProjectCommissionError('')
+
+    try {
+      const { data, error: projectsError } = await supabase
+        .from('project_commission_settings')
+        .select(projectCommissionSelectFields)
+        .order('project_name', { ascending: true })
+
+      if (projectsError) {
+        const message = errorMessage(projectsError)
+        console.error('project_commission_settings 查询失败:', projectsError)
+        setProjectCommissionError(message)
+        setProjectCommissions([])
+        return false
+      }
+
+      setProjectCommissions((data || []).map(fromProjectCommission))
+      return true
+    } catch (projectsError) {
+      const message = errorMessage(projectsError)
+      console.error('project_commission_settings 查询异常:', projectsError)
+      setProjectCommissionError(message)
+      setProjectCommissions([])
+      return false
+    }
+  }, [])
+
   const loadStoreTargets = useCallback(async (profileData) => {
     if (!supabase || !profileData) return false
     setStoreTargetError('')
@@ -398,6 +478,8 @@ export function useCloudData(session) {
     setEmployeeError('')
     setDailyReviewError('')
     setPerformanceReportError('')
+    setPerformanceRecordError('')
+    setProjectCommissionError('')
     setStoreTargetError('')
 
     try {
@@ -428,7 +510,7 @@ export function useCloudData(session) {
       }
 
       if (!isValidRole(activeProfile.role)) {
-        setError('当前账号角色无效，只允许 boss、manager、beautician。')
+        setError('当前账号角色无效，只允许 boss、manager、beautician、consultant、director、regional_manager、technical_teacher、admin。')
         setProfile(null)
         return
       }
@@ -460,15 +542,17 @@ export function useCloudData(session) {
       const namesFromDb = storesRes.error ? [] : (storesRes.data || []).map((store) => store.name)
       setStoreNames(normalizeStoreNames(namesFromDb))
 
-      const [customersOk, followupsOk, employeesOk, dailyReviewsOk, performanceReportsOk, storeTargetsOk] = await Promise.all([
+      const [customersOk, followupsOk, employeesOk, dailyReviewsOk, performanceReportsOk, performanceRecordsOk, projectCommissionsOk, storeTargetsOk] = await Promise.all([
         loadCustomers(activeProfile),
         loadFollowups(activeProfile),
         loadEmployees(activeProfile),
         loadDailyReviews(activeProfile),
         loadPerformanceReports(activeProfile),
+        loadPerformanceRecords(activeProfile),
+        loadProjectCommissions(),
         loadStoreTargets(activeProfile),
       ])
-      if (errors.length || !customersOk || !followupsOk || !employeesOk || !dailyReviewsOk || !performanceReportsOk || !storeTargetsOk) {
+      if (errors.length || !customersOk || !followupsOk || !employeesOk || !dailyReviewsOk || !performanceReportsOk || !performanceRecordsOk || !projectCommissionsOk || !storeTargetsOk) {
         setError((current) => [current, ...errors].filter(Boolean).join('；'))
       }
     } catch (loadError) {
@@ -478,7 +562,7 @@ export function useCloudData(session) {
     } finally {
       setLoading(false)
     }
-  }, [session, loadCustomers, loadFollowups, loadEmployees, loadDailyReviews, loadPerformanceReports, loadStoreTargets])
+  }, [session, loadCustomers, loadFollowups, loadEmployees, loadDailyReviews, loadPerformanceReports, loadPerformanceRecords, loadProjectCommissions, loadStoreTargets])
 
   useEffect(() => {
     loadAll()
@@ -713,14 +797,28 @@ export function useCloudData(session) {
     await loadStoreTargets(profile)
   }
 
+  const saveProjectCommission = async (row) => {
+    const payload = toProjectCommission(row)
+    const request = row.id && !String(row.id).startsWith('preset-')
+      ? supabase.from('project_commission_settings').update(payload).eq('id', row.id).select(projectCommissionSelectFields).single()
+      : supabase.from('project_commission_settings').insert(payload).select(projectCommissionSelectFields).single()
+    const { data, error: saveError } = await request
+    if (saveError) throw new Error(errorMessage(saveError))
+    if (data) {
+      const mapped = fromProjectCommission(data)
+      setProjectCommissions((list) => {
+        const exists = list.some((item) => item.id === mapped.id)
+        return exists ? list.map((item) => (item.id === mapped.id ? mapped : item)) : [mapped, ...list]
+      })
+    }
+    await loadProjectCommissions()
+  }
+
   const saveEmployee = async (row) => {
     const storeName = writeStoreForProfile(row.store, profile)
     const employeePayload = {
-      name: row.name || '',
-      phone: row.phone || '',
+      ...toEmployee(row, profile),
       store: storeName,
-      role: row.role || 'beautician',
-      note: row.note || '',
     }
     const { data, error: saveError } = row.id
       ? await supabase.from('employees').update(employeePayload).eq('id', row.id).select(employeeSelectFields).single()
@@ -772,6 +870,8 @@ export function useCloudData(session) {
     followups,
     reviews,
     performanceReports,
+    performanceRecords,
+    projectCommissions,
     storeTargets,
     loading,
     error,
@@ -780,6 +880,8 @@ export function useCloudData(session) {
     employeeError,
     dailyReviewError,
     performanceReportError,
+    performanceRecordError,
+    projectCommissionError,
     storeTargetError,
     refresh: loadAll,
     loadCustomers,
@@ -787,6 +889,8 @@ export function useCloudData(session) {
     loadEmployees,
     loadDailyReviews,
     loadPerformanceReports,
+    loadPerformanceRecords,
+    loadProjectCommissions,
     loadStoreTargets,
     saveCustomer,
     importCustomers,
@@ -799,6 +903,7 @@ export function useCloudData(session) {
     savePerformanceReport,
     deletePerformanceReport,
     saveStoreTarget,
+    saveProjectCommission,
     saveEmployee,
     deleteEmployee,
   }

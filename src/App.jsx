@@ -6,39 +6,52 @@ import {
   makeCustomerStatus,
   stores as defaultStores,
 } from './data/seedData'
+import { defaultProjectCommissions, demoPerformanceRecords, demoSalaryEmployees, projectCategoryOptions } from './data/salarySeedData'
 import { canManage, useCloudData } from './hooks/useCloudData'
 import { normalizeStoreName, validStoreNames } from './lib/mappers'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { ageFromBirthday, daysSince, normalizeDateInput, percent, todayString } from './utils/date'
 import { money } from './utils/format'
+import {
+  calculateEmployeeSalary,
+  defaultSalaryPlans,
+  getSalaryPlanForRole,
+  salaryRoleOptions,
+} from './utils/salaryCalculator'
 
 const navItems = [
   ['dashboard', '今日看板'],
+  ['customers', '顾客管理'],
   ['activation', '未到店激活'],
-  ['customers', '顾客档案'],
-  ['followups', '跟进记录'],
-  ['reviews', '每日复盘'],
-  ['employees', '员工管理'],
+  ['storeTargets', '门店目标'],
   ['performanceReports', '员工业绩日报'],
   ['performanceMonthly', '员工业绩月报'],
-  ['storeTargets', '门店目标'],
+  ['salarySettlement', '工资结算'],
+  ['projectCommissions', '项目提成设置'],
+  ['employees', '员工管理'],
+  ['settings', '系统设置'],
 ]
 
 function isBossRole(role) {
   const value = String(role || '').trim().toLowerCase()
-  return value === 'boss'
+  return value === 'boss' || value === 'admin'
 }
 
 function isBeauticianRole(role) {
   const value = String(role || '').trim().toLowerCase()
-  return value === 'beautician'
+  return value === 'beautician' || value === 'consultant' || value === 'technical_teacher'
 }
 
 function roleLabel(role) {
   const labels = {
     boss: '老板',
+    admin: '管理员',
     manager: '店长',
     beautician: '美容师',
+    consultant: '顾问',
+    director: '总监',
+    regional_manager: '区域经理',
+    technical_teacher: '技术老师',
   }
   return labels[role] || role || ''
 }
@@ -54,13 +67,6 @@ const customerImportHeaders = {
 }
 
 const activationStatusOptions = ['未跟进', '已联系', '已预约', '已到店', '无意向']
-const commissionRates = {
-  serviceSales: 0.1,
-  consumeSales: 0.05,
-  cashSales: 0.08,
-  upsellAmount: 0.1,
-}
-
 function normalizeActivationStatus(value) {
   const status = String(value || '').trim()
   if (status === '未联系') return '未跟进'
@@ -180,6 +186,14 @@ const emptyEmployee = {
   phone: '',
   store: defaultStores[0],
   role: 'beautician',
+  baseSalary: defaultSalaryPlans.beautician.baseSalary,
+  socialSecurityAllowance: defaultSalaryPlans.beautician.socialSecurityAllowance,
+  fullAttendanceBonus: defaultSalaryPlans.beautician.fullAttendanceBonus,
+  senioritySalary: 0,
+  entryDate: '',
+  isActive: true,
+  isTechnicalDepartment: false,
+  salaryPlanType: defaultSalaryPlans.beautician.salaryPlanType,
   today_followups: 0,
   today_appointments: 0,
   today_arrivals: 0,
@@ -199,6 +213,16 @@ const emptyPerformanceReport = {
   newCustomers: 0,
   repeatCustomers: 0,
   upsellAmount: 0,
+}
+
+const emptyProjectCommission = {
+  projectName: '',
+  category: 'body',
+  manualCommission: 0,
+  durationMinutes: '',
+  unit: '次',
+  isActive: true,
+  remark: '',
 }
 
 function App() {
@@ -249,9 +273,11 @@ function App() {
     customers: active === 'customers' ? cloud.customers : enrichedCustomers,
     employees: cloud.employees,
     followups: cloud.followups,
-    reviews: cloud.reviews,
-    performanceReports: cloud.performanceReports,
-    storeTargets: cloud.storeTargets,
+	    reviews: cloud.reviews,
+	    performanceReports: cloud.performanceReports,
+	    performanceRecords: cloud.performanceRecords,
+	    projectCommissions: cloud.projectCommissions,
+	    storeTargets: cloud.storeTargets,
     profile: cloud.profile,
     role: cloud.role,
     stores: validStoreNames,
@@ -259,8 +285,10 @@ function App() {
     followupError: cloud.followupError,
     employeeError: cloud.employeeError,
     dailyReviewError: cloud.dailyReviewError,
-    performanceReportError: cloud.performanceReportError,
-    storeTargetError: cloud.storeTargetError,
+	    performanceReportError: cloud.performanceReportError,
+	    performanceRecordError: cloud.performanceRecordError,
+	    projectCommissionError: cloud.projectCommissionError,
+	    storeTargetError: cloud.storeTargetError,
     saveCustomer: cloud.saveCustomer,
     importCustomers: cloud.importCustomers,
     deleteCustomer: cloud.deleteCustomer,
@@ -269,10 +297,11 @@ function App() {
     deleteFollowup: cloud.deleteFollowup,
     saveReview: cloud.saveReview,
     deleteReview: cloud.deleteReview,
-    savePerformanceReport: cloud.savePerformanceReport,
-    deletePerformanceReport: cloud.deletePerformanceReport,
-    saveStoreTarget: cloud.saveStoreTarget,
-    saveEmployee: cloud.saveEmployee,
+	    savePerformanceReport: cloud.savePerformanceReport,
+	    deletePerformanceReport: cloud.deletePerformanceReport,
+	    saveStoreTarget: cloud.saveStoreTarget,
+	    saveProjectCommission: cloud.saveProjectCommission,
+	    saveEmployee: cloud.saveEmployee,
     deleteEmployee: cloud.deleteEmployee,
     setActive,
   }
@@ -335,11 +364,14 @@ function App() {
         {active === 'customers' && <CustomersModule {...pageProps} />}
         {active === 'activation' && <ActivationModule {...pageProps} />}
         {active === 'followups' && <FollowupsModule {...pageProps} />}
-        {active === 'reviews' && <ReviewsModule {...pageProps} />}
-        {active === 'employees' && <EmployeesModule {...pageProps} />}
-        {active === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
-        {active === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
-        {active === 'storeTargets' && <StoreTargetsModule {...pageProps} />}
+	        {active === 'reviews' && <ReviewsModule {...pageProps} />}
+	        {active === 'employees' && <EmployeesModule {...pageProps} />}
+	        {active === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
+	        {active === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
+	        {active === 'salarySettlement' && <SalarySettlementModule {...pageProps} />}
+	        {active === 'projectCommissions' && <ProjectCommissionSettingsModule {...pageProps} />}
+	        {active === 'storeTargets' && <StoreTargetsModule {...pageProps} />}
+	        {active === 'settings' && <SettingsModule />}
       </main>
     </div>
   )
@@ -1310,6 +1342,15 @@ function EmployeesModule({ employees, stores, role, profile, employeeError, save
   const [editing, setEditing] = useState(null)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
+  const [filters, setFilters] = useState({
+    store: canChooseStore ? '全部门店' : fixedStore,
+    role: '全部岗位',
+  })
+  const filteredEmployees = employees.filter((item) => {
+    const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store
+    const roleMatch = filters.role === '全部岗位' || item.role === filters.role
+    return storeMatch && roleMatch
+  })
 
   const showToast = (message) => {
     setToast(message)
@@ -1342,32 +1383,41 @@ function EmployeesModule({ employees, stores, role, profile, employeeError, save
     <Panel title="员工管理" subtitle="员工基础资料长期保存，今日数据按日期保存" action={canEditEmployees ? <PrimaryButton onClick={() => setEditing({ ...emptyEmployee, store: fixedStore || stores[0] || defaultStores[0] })}>新增员工</PrimaryButton> : null}>
       {toast && <Toast>{toast}</Toast>}
       {(error || employeeError) && <ErrorNotice>{error || employeeError}</ErrorNotice>}
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+        <MetricBox label="员工工资方案" value="基础工资+社保+全勤+工龄" />
+        <MetricBox label="技术部兼容" value="可标记技术老师" />
+      </div>
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+        <Field label="按门店筛选"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value })} options={canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]} disabled={!canChooseStore} /></Field>
+        <Field label="按岗位筛选"><Select value={filters.role} onChange={(value) => setFilters({ ...filters, role: value })} options={['全部岗位', ...salaryRoleOptions]} /></Field>
+      </div>
       <Table>
         <thead>
           <tr>
-            {['员工姓名', '手机号', '所属门店', '角色', '今日跟进数', '今日预约数', '今日到店数', '今日成交数', '今日销售额', '备注', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+            {['员工姓名', '手机号', '所属门店', '岗位', '基础工资', '社保补助', '全勤奖', '工龄工资', '在职', '工资方案', '今日销售额', '操作'].map((head) => <Th key={head}>{head}</Th>)}
           </tr>
         </thead>
         <tbody>
-          {employees.length === 0 && (
+          {filteredEmployees.length === 0 && (
             <tr className="border-t border-pink-50">
-              <Td colSpan={11}>
+              <Td colSpan={12}>
                 <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工数据</div>
               </Td>
             </tr>
           )}
-          {employees.map((item) => (
+          {filteredEmployees.map((item) => (
             <tr key={item.id} className="border-t border-pink-50">
               <Td><div className="font-semibold text-[#5f263c]">{item.name}</div></Td>
               <Td>{item.phone}</Td>
               <Td>{item.store}</Td>
               <Td>{roleLabel(item.role)}</Td>
-              <Td>{item.today_followups || 0}</Td>
-              <Td>{item.today_appointments || 0}</Td>
-              <Td>{item.today_arrivals || 0}</Td>
-              <Td>{item.today_deals || 0}</Td>
+              <Td>{money(item.baseSalary)}</Td>
+              <Td>{money(item.socialSecurityAllowance)}</Td>
+              <Td>{money(item.fullAttendanceBonus)}</Td>
+              <Td>{money(item.senioritySalary)}</Td>
+              <Td><Badge tone={item.isActive ? 'success' : 'warning'}>{item.isActive ? '在职' : '停用'}</Badge></Td>
+              <Td>{item.salaryPlanType || ''}</Td>
               <Td>{money(item.today_sales || 0)}</Td>
-              <Td>{item.note || ''}</Td>
               <Td>
                 {canEditEmployees ? (
                   <>
@@ -1566,7 +1616,71 @@ function PerformanceReportsModule({ performanceReports, employees, stores, role,
   )
 }
 
-function PerformanceMonthlyModule({ performanceReports, employees, stores, role, profile, performanceReportError }) {
+function salaryEmployeeSource(employees) {
+  return Array.isArray(employees) && employees.length > 0 ? employees : demoSalaryEmployees
+}
+
+function salaryRecordSource(performanceRecords, performanceReports) {
+  if (Array.isArray(performanceRecords) && performanceRecords.length > 0) return performanceRecords
+  if (Array.isArray(performanceReports) && performanceReports.length > 0) {
+    return performanceReports.map((item) => ({
+      id: item.id,
+      date: item.date,
+      month: String(item.date || '').slice(0, 7),
+      storeName: normalizeStoreName(item.store),
+      employee: item.employee,
+      salesEmployeeName: item.employee,
+      serviceEmployeeName: item.employee,
+      amount: Number(item.totalSales || 0),
+      consumeAmount: Number(item.consumeSales || 0),
+      manualCommissionAmount: Math.max(Number(item.serviceSales || 0) * 0.03, 0),
+      arrivals: Number(item.arrivals || 0),
+      newCustomers: Number(item.newCustomers || 0),
+      repeatCustomers: Number(item.repeatCustomers || 0),
+      serviceSales: Number(item.serviceSales || 0),
+      consumeSales: Number(item.consumeSales || 0),
+      cashSales: Number(item.cashSales || 0),
+      upsellAmount: Number(item.upsellAmount || 0),
+    }))
+  }
+  return demoPerformanceRecords
+}
+
+function buildMonthlySalaryRows({ employees, records, month, store, employee, role }) {
+  const scopedEmployees = (Array.isArray(employees) ? employees : []).filter((item) => {
+    const storeMatch = store === '全部门店' || normalizeStoreName(item.store) === store
+    const employeeMatch = employee === '全部员工' || item.name === employee
+    const roleMatch = role === '全部岗位' || item.role === role
+    return storeMatch && employeeMatch && roleMatch && item.isActive !== false
+  })
+
+  return scopedEmployees.map((item) => {
+    const employeeRecords = (Array.isArray(records) ? records : []).filter((record) => {
+      const recordMonth = String(record.month || record.date || '').slice(0, 7)
+      const salesName = record.salesEmployeeName || record.employee
+      const serviceName = record.serviceEmployeeName || record.employee
+      return recordMonth === month && (salesName === item.name || serviceName === item.name)
+    })
+    const salary = calculateEmployeeSalary(item, records, { month })
+    return {
+      ...salary,
+      employeeId: item.id,
+      employeeName: item.name,
+      storeName: normalizeStoreName(item.store),
+      role: item.role,
+      arrivals: employeeRecords.reduce((sum, record) => sum + Number(record.arrivals || 0), 0),
+      newCustomers: employeeRecords.reduce((sum, record) => sum + Number(record.newCustomers || 0), 0),
+      consumeAmount: employeeRecords.reduce((sum, record) => sum + Number(record.consumeAmount ?? record.consumeSales ?? 0), 0),
+      serviceSales: employeeRecords.reduce((sum, record) => sum + Number(record.serviceSales || 0), 0),
+      cashSales: employeeRecords.reduce((sum, record) => sum + Number(record.cashSales || 0), 0),
+      upsellAmount: employeeRecords.reduce((sum, record) => sum + Number(record.upsellAmount || 0), 0),
+      recordCount: employeeRecords.length,
+      records: employeeRecords,
+    }
+  }).sort((a, b) => Number(b.personalPerformanceAmount || 0) - Number(a.personalPerformanceAmount || 0))
+}
+
+function PerformanceMonthlyModule({ performanceReports, performanceRecords, employees, stores, role, profile, performanceReportError, performanceRecordError, setActive }) {
   const canChooseStore = isBossRole(role)
   const isBeautician = isBeauticianRole(role)
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
@@ -1574,84 +1688,48 @@ function PerformanceMonthlyModule({ performanceReports, employees, stores, role,
     month: todayString().slice(0, 7),
     store: canChooseStore ? '全部门店' : fixedStore,
     employee: isBeautician ? profile?.name || '' : '全部员工',
+    role: '全部岗位',
   })
   const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
-  const scopedEmployees = employees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
+  const sourceEmployees = salaryEmployeeSource(employees)
+  const sourceRecords = salaryRecordSource(performanceRecords, performanceReports)
+  const scopedEmployees = sourceEmployees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
   const employeeOptions = isBeautician ? [profile?.name || ''] : ['全部员工', ...unique(scopedEmployees.map((item) => item.name).filter(Boolean))]
-  const monthlySource = performanceReports.filter((item) => {
-    const monthMatch = !filters.month || String(item.date || '').startsWith(filters.month)
-    const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store
-    const employeeMatch = filters.employee === '全部员工' || item.employee === filters.employee
-    return monthMatch && storeMatch && employeeMatch
-  })
-  const monthlyRows = Object.values(monthlySource.reduce((map, item) => {
-    const key = `${normalizeStoreName(item.store)}__${item.employee}`
-    if (!map[key]) {
-      map[key] = {
-        month: filters.month,
-        store: normalizeStoreName(item.store),
-        employee: item.employee,
-        arrivals: 0,
-        serviceSales: 0,
-        consumeSales: 0,
-        cashSales: 0,
-        newCustomers: 0,
-        repeatCustomers: 0,
-        upsellAmount: 0,
-        totalSales: 0,
-      }
-    }
-    map[key].arrivals += Number(item.arrivals || 0)
-    map[key].serviceSales += Number(item.serviceSales || 0)
-    map[key].consumeSales += Number(item.consumeSales || 0)
-    map[key].cashSales += Number(item.cashSales || 0)
-    map[key].newCustomers += Number(item.newCustomers || 0)
-    map[key].repeatCustomers += Number(item.repeatCustomers || 0)
-    map[key].upsellAmount += Number(item.upsellAmount || 0)
-    map[key].totalSales += Number(item.totalSales || 0)
-    return map
-  }, {})).map((item) => {
-    const serviceCommission = item.serviceSales * commissionRates.serviceSales
-    const consumeCommission = item.consumeSales * commissionRates.consumeSales
-    const cashCommission = item.cashSales * commissionRates.cashSales
-    const upsellCommission = item.upsellAmount * commissionRates.upsellAmount
-    return {
-      ...item,
-      unitPrice: item.arrivals > 0 ? item.totalSales / item.arrivals : 0,
-      serviceCommission,
-      consumeCommission,
-      cashCommission,
-      upsellCommission,
-      totalCommission: serviceCommission + consumeCommission + cashCommission + upsellCommission,
-    }
-  }).sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
-  const monthTotalSales = monthlyRows.reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
+  const monthlyRows = buildMonthlySalaryRows({ employees: sourceEmployees, records: sourceRecords, month: filters.month, store: filters.store, employee: filters.employee, role: filters.role })
+  const monthTotalSales = monthlyRows.reduce((sum, item) => sum + Number(item.personalPerformanceAmount || 0), 0)
   const monthArrivals = monthlyRows.reduce((sum, item) => sum + Number(item.arrivals || 0), 0)
   const monthNewCustomers = monthlyRows.reduce((sum, item) => sum + Number(item.newCustomers || 0), 0)
-  const monthUpsellAmount = monthlyRows.reduce((sum, item) => sum + Number(item.upsellAmount || 0), 0)
+  const monthConsumeAmount = monthlyRows.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0)
+  const monthManualCommission = monthlyRows.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0)
+  const estimatedSalaryTotal = monthlyRows.reduce((sum, item) => sum + Number(item.totalSalary || 0), 0)
   const monthUnitPrice = monthArrivals > 0 ? monthTotalSales / monthArrivals : 0
   const storeRank = validStoreNames
     .map((store) => {
-      const list = monthlyRows.filter((item) => item.store === store)
+      const list = monthlyRows.filter((item) => item.storeName === store)
       return {
         store,
-        totalSales: list.reduce((sum, item) => sum + Number(item.totalSales || 0), 0),
+        totalSales: list.reduce((sum, item) => sum + Number(item.personalPerformanceAmount || 0), 0),
         arrivals: list.reduce((sum, item) => sum + Number(item.arrivals || 0), 0),
       }
     })
     .filter((item) => canChooseStore || item.store === fixedStore)
     .sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
-  const newCustomerRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: `${item.newCustomers}人`, amount: Number(item.newCustomers || 0), sub: money(item.totalSales) })).sort((a, b) => b.amount - a.amount)
-  const upsellRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: money(item.upsellAmount), amount: Number(item.upsellAmount || 0), sub: `${item.arrivals}人到店` })).sort((a, b) => b.amount - a.amount)
-  const employeeRank = monthlyRows.map((item) => ({ name: `${item.employee} · ${item.store}`, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `提成 ${money(item.totalCommission)}` }))
+  const roleSalaryRows = Object.values(monthlyRows.reduce((map, item) => {
+    const key = roleLabel(item.role)
+    map[key] = map[key] || { name: key, total: 0, count: 0 }
+    map[key].total += Number(item.totalSalary || 0)
+    map[key].count += 1
+    return map
+  }, {}))
+  const employeeRank = monthlyRows.map((item) => ({ name: `${item.employeeName} · ${item.storeName}`, value: money(item.personalPerformanceAmount), amount: Number(item.personalPerformanceAmount || 0), sub: `预计工资 ${money(item.totalSalary)}` }))
 
   return (
     <div className="space-y-5">
-      <Panel title="员工业绩月报" subtitle="自动汇总员工业绩日报，并按默认规则计算提成">
-        {performanceReportError && <ErrorNotice>{performanceReportError}</ErrorNotice>}
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+      <Panel title="员工业绩月报" subtitle="按月份汇总员工个人业绩、手工费、阶梯提成和预计工资">
+        {(performanceReportError || performanceRecordError) && <ErrorNotice>{performanceReportError || performanceRecordError}</ErrorNotice>}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-6">
           <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
-            <div className="text-sm text-pink-100">本月总业绩</div>
+            <div className="text-sm text-pink-100">本月门店总业绩</div>
             <div className="mt-2 text-3xl font-black">{money(monthTotalSales)}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
@@ -1663,51 +1741,54 @@ function PerformanceMonthlyModule({ performanceReports, employees, stores, role,
             <div className="mt-2 text-3xl font-black text-green-600">{monthNewCustomers}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">本月客单价</div>
-            <div className="mt-2 text-3xl font-black text-[#bd1657]">{money(monthUnitPrice)}</div>
+            <div className="text-sm text-[#9a6078]">本月消耗金额</div>
+            <div className="mt-2 text-3xl font-black text-[#bd1657]">{money(monthConsumeAmount)}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">本月升单金额</div>
-            <div className="mt-2 text-3xl font-black text-orange-600">{money(monthUpsellAmount)}</div>
+            <div className="text-sm text-[#9a6078]">本月手工费总额</div>
+            <div className="mt-2 text-3xl font-black text-orange-600">{money(monthManualCommission)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">本月预计工资总额</div>
+            <div className="mt-2 text-3xl font-black text-green-700">{money(estimatedSalaryTotal)}</div>
           </div>
         </div>
-        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-3">
+        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-4">
           <Field label="月份筛选"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
           <Field label="门店筛选"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value, employee: isBeautician ? profile?.name || '' : '全部员工' })} options={storeOptions} disabled={!canChooseStore} /></Field>
           <Field label="员工筛选"><Select value={filters.employee} onChange={(value) => setFilters({ ...filters, employee: value })} options={employeeOptions} disabled={isBeautician} /></Field>
-        </div>
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-          <MetricPill>手工提成 10%</MetricPill>
-          <MetricPill>消耗提成 5%</MetricPill>
-          <MetricPill>现金提成 8%</MetricPill>
-          <MetricPill>升单提成 10%</MetricPill>
+          <Field label="岗位筛选"><Select value={filters.role} onChange={(value) => setFilters({ ...filters, role: value })} options={['全部岗位', ...salaryRoleOptions]} /></Field>
         </div>
         <Table>
           <thead>
             <tr>
-              {['排名', '月份', '门店', '员工', '到店人数', '总业绩', '手工业绩', '消耗业绩', '现金业绩', '升单金额', '客单价', '总提成'].map((head) => <Th key={head}>{head}</Th>)}
+              {['排名', '月份', '门店', '员工', '岗位', '到店人数', '个人业绩', '消耗金额', '手工费', '提成比例', '业绩提成', '预计工资', '操作'].map((head) => <Th key={head}>{head}</Th>)}
             </tr>
           </thead>
           <tbody>
             {monthlyRows.length === 0 && (
               <tr className="border-t border-pink-50">
-                <Td colSpan={12}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工业绩月报</div></Td>
+                <Td colSpan={13}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工业绩数据，请先录入业绩记录或检查筛选条件。</div></Td>
               </tr>
             )}
             {monthlyRows.map((item, index) => (
-              <tr key={`${item.store}-${item.employee}`} className="border-t border-pink-50">
+              <tr key={`${item.storeName}-${item.employeeName}`} className="border-t border-pink-50">
                 <Td><Badge tone={index === 0 ? 'danger' : 'pink'}>第{index + 1}名</Badge></Td>
                 <Td>{item.month}</Td>
-                <Td>{item.store}</Td>
-                <Td><div className="font-semibold text-[#5f263c]">{item.employee}</div></Td>
+                <Td>{item.storeName}</Td>
+                <Td><div className="font-semibold text-[#5f263c]">{item.employeeName}</div></Td>
+                <Td>{roleLabel(item.role)}</Td>
                 <Td>{item.arrivals}</Td>
-                <Td><b className="text-[#bd1657]">{money(item.totalSales)}</b></Td>
-                <Td>{money(item.serviceSales)}</Td>
-                <Td>{money(item.consumeSales)}</Td>
-                <Td>{money(item.cashSales)}</Td>
-                <Td>{money(item.upsellAmount)}</Td>
-                <Td>{money(item.unitPrice)}</Td>
-                <Td><b className="text-green-700">{money(item.totalCommission)}</b></Td>
+                <Td><b className="text-[#bd1657]">{money(item.personalPerformanceAmount)}</b></Td>
+                <Td>{money(item.consumeAmount)}</Td>
+                <Td>{money(item.manualCommissionAmount)}</Td>
+                <Td>{Math.round((item.performanceCommissionRate || 0) * 100)}%</Td>
+                <Td>{money(item.performanceCommissionAmount)}</Td>
+                <Td><b className="text-green-700">{money(item.totalSalary)}</b></Td>
+                <Td>
+                  <ActionButton onClick={() => window.alert(`提成规则：${item.performanceCommissionLabel}\n手工费：${money(item.manualCommissionAmount)}\n预计工资：${money(item.totalSalary)}`)}>查看明细</ActionButton>
+                  <ActionButton onClick={() => setActive('salarySettlement')}>工资结算</ActionButton>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -1721,14 +1802,253 @@ function PerformanceMonthlyModule({ performanceReports, employees, stores, role,
         <Panel title="本月门店业绩排行榜" subtitle="按本月总业绩从高到低">
           <RankList rows={storeRank.map((item) => ({ name: item.store, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `${item.arrivals}人到店` }))} />
         </Panel>
-        <Panel title="本月新客排行榜" subtitle="按本月新客人数从高到低">
-          <RankList rows={newCustomerRank} />
-        </Panel>
-        <Panel title="本月升单排行榜" subtitle="按本月升单金额从高到低">
-          <RankList rows={upsellRank} />
+        <Panel title="各岗位工资占比" subtitle={`本月客单价 ${money(monthUnitPrice)}`}>
+          <RankList rows={roleSalaryRows.map((item) => ({ name: item.name, value: money(item.total), amount: item.total, sub: `${item.count}人` }))} />
         </Panel>
       </div>
     </div>
+  )
+}
+
+function SalarySettlementModule({ performanceReports, performanceRecords, employees, stores, role, profile, performanceReportError, performanceRecordError }) {
+  const canChooseStore = isBossRole(role)
+  const isBeautician = isBeauticianRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [filters, setFilters] = useState({
+    month: todayString().slice(0, 7),
+    store: canChooseStore ? '全部门店' : fixedStore,
+    role: '全部岗位',
+    employee: isBeautician ? profile?.name || '' : '全部员工',
+  })
+  const [detail, setDetail] = useState(null)
+  const [adjustments, setAdjustments] = useState({})
+  const sourceEmployees = salaryEmployeeSource(employees)
+  const sourceRecords = salaryRecordSource(performanceRecords, performanceReports)
+  const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
+  const scopedEmployees = sourceEmployees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
+  const employeeOptions = isBeautician ? [profile?.name || ''] : ['全部员工', ...unique(scopedEmployees.map((item) => item.name).filter(Boolean))]
+  const rows = buildMonthlySalaryRows({
+    employees: sourceEmployees,
+    records: sourceRecords,
+    month: filters.month,
+    store: filters.store,
+    employee: filters.employee,
+    role: filters.role,
+  }).map((item) => ({
+    ...item,
+    ...adjustments[item.employeeId],
+    totalSalary: item.totalSalary + Number(adjustments[item.employeeId]?.otherBonus || 0) - Number(adjustments[item.employeeId]?.otherDeduction || 0),
+    status: adjustments[item.employeeId]?.status || item.status,
+  }))
+  const totals = {
+    salary: rows.reduce((sum, item) => sum + Number(item.totalSalary || 0), 0),
+    performanceCommission: rows.reduce((sum, item) => sum + Number(item.performanceCommissionAmount || 0), 0),
+    manualCommission: rows.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0),
+    social: rows.reduce((sum, item) => sum + Number(item.socialSecurityAllowance || 0), 0),
+    attendance: rows.reduce((sum, item) => sum + Number(item.fullAttendanceBonus || 0), 0),
+    deduction: rows.reduce((sum, item) => sum + Number(item.absenceDeduction || 0) + Number(item.socialSecurityDeduction || 0) + Number(item.otherDeduction || 0) + Number(adjustments[item.employeeId]?.otherDeduction || 0), 0),
+  }
+  const updateAdjustment = (item, patch) => {
+    setAdjustments((state) => ({
+      ...state,
+      [item.employeeId]: { ...(state[item.employeeId] || {}), ...patch },
+    }))
+  }
+
+  return (
+    <div className="space-y-5">
+      <Panel title="工资结算" subtitle="按岗位工资方案、阶梯提成、手工费和调整项自动生成月工资">
+        {(performanceReportError || performanceRecordError) && <ErrorNotice>{performanceReportError || performanceRecordError}</ErrorNotice>}
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-6">
+          <MetricBox label="应发工资总额" value={money(totals.salary)} />
+          <MetricBox label="业绩提成总额" value={money(totals.performanceCommission)} />
+          <MetricBox label="手工费总额" value={money(totals.manualCommission)} />
+          <MetricBox label="社保补助总额" value={money(totals.social)} />
+          <MetricBox label="全勤奖总额" value={money(totals.attendance)} />
+          <MetricBox label="扣款总额" value={money(totals.deduction)} />
+        </div>
+        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-4">
+          <Field label="月份"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
+          <Field label="门店"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value, employee: isBeautician ? profile?.name || '' : '全部员工' })} options={storeOptions} disabled={!canChooseStore} /></Field>
+          <Field label="岗位"><Select value={filters.role} onChange={(value) => setFilters({ ...filters, role: value })} options={['全部岗位', ...salaryRoleOptions]} /></Field>
+          <Field label="员工"><Select value={filters.employee} onChange={(value) => setFilters({ ...filters, employee: value })} options={employeeOptions} disabled={isBeautician} /></Field>
+        </div>
+        <Table>
+          <thead>
+            <tr>
+              {['员工', '门店', '岗位', '基本工资', '社保', '全勤', '工龄', '个人业绩', '门店业绩', '提成比例', '业绩提成', '手工费', '其他奖金', '扣款', '应发工资', '状态', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && (
+              <tr className="border-t border-pink-50">
+                <Td colSpan={17}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无工资数据，请先录入员工业绩日报或检查筛选条件。</div></Td>
+              </tr>
+            )}
+            {rows.map((item) => (
+              <tr key={item.employeeId} className="border-t border-pink-50">
+                <Td><div className="font-semibold text-[#5f263c]">{item.employeeName}</div></Td>
+                <Td>{item.storeName}</Td>
+                <Td>{roleLabel(item.role)}</Td>
+                <Td>{money(item.baseSalary)}</Td>
+                <Td>{money(item.socialSecurityAllowance)}</Td>
+                <Td>{money(item.fullAttendanceBonus)}</Td>
+                <Td>{money(item.senioritySalary)}</Td>
+                <Td>{money(item.personalPerformanceAmount)}</Td>
+                <Td>{money(item.storePerformanceAmount)}</Td>
+                <Td>{Math.round((item.performanceCommissionRate || 0) * 100)}%</Td>
+                <Td>{money(item.performanceCommissionAmount)}</Td>
+                <Td>{money(item.manualCommissionAmount)}</Td>
+                <Td>{money(item.otherBonus || 0)}</Td>
+                <Td>{money(Number(item.absenceDeduction || 0) + Number(item.socialSecurityDeduction || 0) + Number(item.otherDeduction || 0))}</Td>
+                <Td><b className="text-[#bd1657]">{money(item.totalSalary)}</b></Td>
+                <Td><Badge tone={item.status === '已发放' ? 'success' : item.status === '已确认' ? 'warning' : 'pink'}>{item.status || '未结算'}</Badge></Td>
+                <Td>
+                  <ActionButton onClick={() => setDetail(item)}>查看工资明细</ActionButton>
+                  <ActionButton onClick={() => {
+                    const bonus = window.prompt('其他奖金', String(item.otherBonus || 0))
+                    const deduction = window.prompt('其他扣款', String(item.otherDeduction || 0))
+                    updateAdjustment(item, { otherBonus: Number(bonus || 0), otherDeduction: Number(deduction || 0) })
+                  }}>编辑调整项</ActionButton>
+                  <ActionButton onClick={() => updateAdjustment(item, { status: '已确认' })}>确认工资</ActionButton>
+                  <ActionButton onClick={() => window.alert(`${item.employeeName} 应发工资：${money(item.totalSalary)}`)}>导出</ActionButton>
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Panel>
+      {detail && <SalaryDetailModal item={detail} onClose={() => setDetail(null)} />}
+    </div>
+  )
+}
+
+function SalaryDetailModal({ item, onClose }) {
+  const sectionRows = [
+    ['基础工资', [['基本工资', money(item.baseSalary)], ['社保补助', money(item.socialSecurityAllowance)], ['全勤奖', money(item.fullAttendanceBonus)], ['工龄工资', money(item.senioritySalary)]]],
+    ['业绩提成', [['个人业绩', money(item.personalPerformanceAmount)], ['门店业绩', money(item.storePerformanceAmount)], ['提成规则', item.performanceCommissionLabel], ['提成比例', `${Math.round((item.performanceCommissionRate || 0) * 100)}%`], ['提成金额', money(item.performanceCommissionAmount)]]],
+    ['手工提成', [['服务项目数量', `${item.recordCount || 0}条`], ['手工费合计', money(item.manualCommissionAmount)]]],
+    ['扣款调整', [['请假扣款', money(item.absenceDeduction)], ['社保扣款', money(item.socialSecurityDeduction)], ['其他扣款', money(item.otherDeduction)], ['其他奖金', money(item.otherBonus)], ['备注', item.remark || '']]],
+    ['最终工资', [['应发工资', money(item.totalSalary)]]],
+  ]
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-[#32111f]/30">
+      <div className="h-full w-full max-w-[640px] overflow-y-auto bg-white p-6 shadow-2xl scrollbar-soft">
+        <div className="mb-5 flex items-center justify-between">
+          <h3 className="text-xl font-bold text-[#641631]">{item.employeeName} 工资明细</h3>
+          <button onClick={onClose} className="rounded-md px-4 py-2 text-sm font-semibold text-[#8b4d66] hover:bg-pink-50">关闭</button>
+        </div>
+        <div className="space-y-4">
+          {sectionRows.map(([title, rows]) => (
+            <div key={title} className="rounded-lg border border-pink-100 bg-pink-50/60 p-4">
+              <div className="mb-2 font-bold text-[#641631]">【{title}】</div>
+              {rows.map(([label, value]) => (
+                <div key={label} className="flex justify-between border-b border-pink-100 py-2 last:border-b-0">
+                  <span className="text-[#8a4964]">{label}</span>
+                  <span className="font-semibold text-[#5f263c]">{value}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectCommissionSettingsModule({ projectCommissions, projectCommissionError, saveProjectCommission }) {
+  const [projects, setProjects] = useState(projectCommissions?.length ? projectCommissions : defaultProjectCommissions)
+  const [editing, setEditing] = useState(null)
+  const [filters, setFilters] = useState({ category: '全部分类', keyword: '' })
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (Array.isArray(projectCommissions) && projectCommissions.length) setProjects(projectCommissions)
+  }, [projectCommissions])
+
+  const filteredProjects = projects.filter((item) => {
+    const categoryMatch = filters.category === '全部分类' || item.category === filters.category
+    const keywordMatch = !filters.keyword || String(item.projectName || '').includes(filters.keyword)
+    return categoryMatch && keywordMatch
+  })
+  const showToast = (message) => {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 2200)
+  }
+  const save = async (data) => {
+    setError('')
+    try {
+      if (saveProjectCommission) {
+        await saveProjectCommission(data)
+      } else {
+        const row = data.id ? data : { ...data, id: `local-project-${Date.now()}` }
+        setProjects((list) => list.some((item) => item.id === row.id) ? list.map((item) => (item.id === row.id ? row : item)) : [row, ...list])
+      }
+      setEditing(null)
+      showToast('保存成功')
+    } catch (saveError) {
+      setError(saveError.message || '保存失败')
+    }
+  }
+  const disableProject = async (item) => {
+    await save({ ...item, isActive: false })
+  }
+
+  return (
+    <Panel title="项目提成设置" subtitle="维护美容项目、手工费、项目时长和启用状态" action={<PrimaryButton onClick={() => setEditing(emptyProjectCommission)}>新增项目</PrimaryButton>}>
+      {toast && <Toast>{toast}</Toast>}
+      {(error || projectCommissionError) && <ErrorNotice>{error || projectCommissionError}</ErrorNotice>}
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+        <Field label="分类筛选"><Select value={filters.category} onChange={(value) => setFilters({ ...filters, category: value })} options={['全部分类', ...projectCategoryOptions]} /></Field>
+        <Field label="搜索项目"><Input value={filters.keyword} onChange={(value) => setFilters({ ...filters, keyword: value })} placeholder="输入项目名称" /></Field>
+      </div>
+      <Table>
+        <thead>
+          <tr>
+            {['项目名称', '分类', '手工费', '时间', '单位', '状态', '备注', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {filteredProjects.length === 0 && (
+            <tr className="border-t border-pink-50">
+              <Td colSpan={8}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无项目提成数据</div></Td>
+            </tr>
+          )}
+          {filteredProjects.map((item) => (
+            <tr key={item.id} className="border-t border-pink-50">
+              <Td><div className="font-semibold text-[#5f263c]">{item.projectName}</div></Td>
+              <Td>{projectCategoryOptions.find((option) => option[0] === item.category)?.[1] || '其他'}</Td>
+              <Td>{money(item.manualCommission)}</Td>
+              <Td>{item.durationMinutes ? `${item.durationMinutes}分钟` : ''}</Td>
+              <Td>{item.unit}</Td>
+              <Td><Badge tone={item.isActive ? 'success' : 'warning'}>{item.isActive ? '启用' : '停用'}</Badge></Td>
+              <Td>{item.remark || ''}</Td>
+              <Td>
+                <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
+                {item.isActive && <ActionButton tone="danger" onClick={() => disableProject(item)}>停用</ActionButton>}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      {editing && <ProjectCommissionDrawer data={editing} onClose={() => setEditing(null)} onSave={save} />}
+    </Panel>
+  )
+}
+
+function SettingsModule() {
+  return (
+    <Panel title="系统设置" subtitle="系统字段、角色和门店规范">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricBox label="固定门店" value="4家" />
+        <MetricBox label="工资角色" value="7类" />
+        <MetricBox label="工资规则" value="2026版" />
+      </div>
+      <div className="mt-4 rounded-lg bg-pink-50 p-4 text-sm leading-7 text-[#79445b]">
+        固定门店：{validStoreNames.join('、')}。角色仅使用 boss/admin、manager、beautician、consultant、director、regional_manager、technical_teacher。
+      </div>
+    </Panel>
   )
 }
 
@@ -2057,6 +2377,17 @@ function ReviewDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, on
 function EmployeeDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, onSave }) {
   const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || data.store : data.store
   const [form, setForm] = useState({ ...data, store: fixedStore })
+  const applyRolePlan = (roleValue) => {
+    const plan = getSalaryPlanForRole(roleValue, form.isTechnicalDepartment)
+    setForm({
+      ...form,
+      role: roleValue,
+      baseSalary: plan.baseSalary,
+      socialSecurityAllowance: plan.socialSecurityAllowance,
+      fullAttendanceBonus: plan.fullAttendanceBonus,
+      salaryPlanType: plan.salaryPlanType,
+    })
+  }
   return (
     <Drawer title={form.id ? '编辑员工' : '新增员工'} onClose={onClose} onSave={() => onSave(form)}>
       <FormGrid>
@@ -2069,7 +2400,19 @@ function EmployeeDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, 
             <Select value={form.store} onChange={(value) => setForm({ ...form, store: value })} options={stores} />
           )}
         </Field>
-        <Field label="角色"><Select value={form.role} onChange={(value) => setForm({ ...form, role: value })} options={[['manager', '店长'], ['beautician', '美容师']]} /></Field>
+        <Field label="岗位"><Select value={form.role} onChange={applyRolePlan} options={salaryRoleOptions} /></Field>
+        <Field label="基本工资"><Input type="number" value={form.baseSalary} onChange={(value) => setForm({ ...form, baseSalary: value })} /></Field>
+        <Field label="社保补助"><Input type="number" value={form.socialSecurityAllowance} onChange={(value) => setForm({ ...form, socialSecurityAllowance: value })} /></Field>
+        <Field label="全勤奖"><Input type="number" value={form.fullAttendanceBonus} onChange={(value) => setForm({ ...form, fullAttendanceBonus: value })} /></Field>
+        <Field label="工龄工资"><Input type="number" value={form.senioritySalary} onChange={(value) => setForm({ ...form, senioritySalary: value })} /></Field>
+        <Field label="入职时间"><Input type="date" value={form.entryDate} onChange={(value) => setForm({ ...form, entryDate: value })} /></Field>
+        <Field label="是否在职"><Select value={String(form.isActive !== false)} onChange={(value) => setForm({ ...form, isActive: value === 'true' })} options={[['true', '在职'], ['false', '停用']]} /></Field>
+        <Field label="技术部员工"><Select value={String(Boolean(form.isTechnicalDepartment))} onChange={(value) => {
+          const nextTechnical = value === 'true'
+          const plan = getSalaryPlanForRole(form.role, nextTechnical)
+          setForm({ ...form, isTechnicalDepartment: nextTechnical, baseSalary: plan.baseSalary, socialSecurityAllowance: plan.socialSecurityAllowance, fullAttendanceBonus: plan.fullAttendanceBonus, salaryPlanType: plan.salaryPlanType })
+        }} options={[['false', '否'], ['true', '是']]} /></Field>
+        <Field label="工资方案类型"><Input value={form.salaryPlanType} onChange={(value) => setForm({ ...form, salaryPlanType: value })} /></Field>
         <Field label="今日跟进数"><Input type="number" value={form.today_followups ?? 0} onChange={(value) => setForm({ ...form, today_followups: value })} /></Field>
         <Field label="今日预约数"><Input type="number" value={form.today_appointments ?? 0} onChange={(value) => setForm({ ...form, today_appointments: value })} /></Field>
         <Field label="今日到店数"><Input type="number" value={form.today_arrivals ?? 0} onChange={(value) => setForm({ ...form, today_arrivals: value })} /></Field>
@@ -2117,6 +2460,23 @@ function PerformanceReportDrawer({ data, employees, stores, profile, lockedStore
         <Field label="新客人数"><Input type="number" value={form.newCustomers} onChange={(value) => setForm({ ...form, newCustomers: value })} /></Field>
         <Field label="老客复购人数"><Input type="number" value={form.repeatCustomers} onChange={(value) => setForm({ ...form, repeatCustomers: value })} /></Field>
         <Field label="升单金额"><Input type="number" value={form.upsellAmount} onChange={(value) => setForm({ ...form, upsellAmount: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
+function ProjectCommissionDrawer({ data, onClose, onSave }) {
+  const [form, setForm] = useState({ ...data })
+  return (
+    <Drawer title={form.id ? '编辑项目提成' : '新增项目提成'} onClose={onClose} onSave={() => onSave(form)}>
+      <FormGrid>
+        <Field label="项目名称"><Input value={form.projectName} onChange={(value) => setForm({ ...form, projectName: value })} /></Field>
+        <Field label="项目分类"><Select value={form.category} onChange={(value) => setForm({ ...form, category: value })} options={projectCategoryOptions} /></Field>
+        <Field label="手工费"><Input type="number" value={form.manualCommission} onChange={(value) => setForm({ ...form, manualCommission: value })} /></Field>
+        <Field label="项目时长"><Input type="number" value={form.durationMinutes} onChange={(value) => setForm({ ...form, durationMinutes: value })} placeholder="分钟，可为空" /></Field>
+        <Field label="计费单位"><Input value={form.unit} onChange={(value) => setForm({ ...form, unit: value })} /></Field>
+        <Field label="是否启用"><Select value={String(form.isActive !== false)} onChange={(value) => setForm({ ...form, isActive: value === 'true' })} options={[['true', '启用'], ['false', '停用']]} /></Field>
+        <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
       </FormGrid>
     </Drawer>
   )

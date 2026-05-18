@@ -46,6 +46,14 @@ export function fromEmployee(row) {
     phone: row.phone || '',
     store: row.store || '',
     role: row.role || 'beautician',
+    baseSalary: Number(row.base_salary ?? 0),
+    socialSecurityAllowance: Number(row.social_security_allowance ?? 0),
+    fullAttendanceBonus: Number(row.full_attendance_bonus ?? 0),
+    senioritySalary: Number(row.seniority_salary ?? 0),
+    entryDate: row.entry_date || '',
+    isActive: row.is_active !== false,
+    isTechnicalDepartment: Boolean(row.is_technical_department),
+    salaryPlanType: row.salary_plan_type || '',
     today_followups: row.today_followups ?? 0,
     today_appointments: row.today_appointments ?? 0,
     today_arrivals: row.today_arrivals ?? 0,
@@ -55,6 +63,25 @@ export function fromEmployee(row) {
     userId: row.user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+}
+
+export function toEmployee(row, profile) {
+  return {
+    name: row.name || '',
+    phone: row.phone || '',
+    store: normalizeStoreForWrite(row.store, profile?.store),
+    role: row.role || 'beautician',
+    note: row.note || '',
+    base_salary: Number(row.baseSalary || 0),
+    social_security_allowance: Number(row.socialSecurityAllowance || 0),
+    full_attendance_bonus: Number(row.fullAttendanceBonus || 0),
+    seniority_salary: Number(row.senioritySalary || 0),
+    entry_date: row.entryDate || null,
+    is_active: row.isActive !== false,
+    is_technical_department: Boolean(row.isTechnicalDepartment),
+    salary_plan_type: row.salaryPlanType || '',
+    updated_at: new Date().toISOString(),
   }
 }
 
@@ -206,5 +233,62 @@ export function toStoreTarget(row, profile) {
     current_sales: Number(row.currentSales || 0),
     completion_rate: Number(row.completionRate || 0),
     remaining_amount: Number(row.remainingAmount || 0),
+  }
+}
+
+export function fromProjectCommission(row) {
+  return {
+    id: row.id,
+    projectName: row.project_name || '',
+    category: row.category || 'other',
+    manualCommission: Number(row.manual_commission || 0),
+    durationMinutes: row.duration_minutes ?? '',
+    unit: row.unit || '次',
+    isActive: row.is_active !== false,
+    remark: row.remark || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function toProjectCommission(row) {
+  return {
+    project_name: row.projectName || '',
+    category: row.category || 'other',
+    manual_commission: Number(row.manualCommission || 0),
+    duration_minutes: row.durationMinutes === '' || row.durationMinutes == null ? null : Number(row.durationMinutes),
+    unit: row.unit || '次',
+    is_active: row.isActive !== false,
+    remark: row.remark || '',
+    updated_at: new Date().toISOString(),
+  }
+}
+
+export function fromPerformanceRecord(row) {
+  return {
+    id: row.id,
+    date: row.date || '',
+    month: row.month || String(row.date || '').slice(0, 7),
+    storeId: row.store_id,
+    storeName: normalizeStoreName(row.store_name || row.store),
+    customerId: row.customer_id,
+    customerName: row.customer_name || '',
+    projectId: row.project_id,
+    projectName: row.project_name || '',
+    projectCategory: row.project_category || '',
+    amount: Number(row.amount || 0),
+    consumeAmount: Number(row.consume_amount || 0),
+    paymentType: row.payment_type || 'cash',
+    serviceEmployeeId: row.service_employee_id,
+    serviceEmployeeName: row.service_employee_name || '',
+    salesEmployeeId: row.sales_employee_id,
+    salesEmployeeName: row.sales_employee_name || '',
+    consultantId: row.consultant_id,
+    consultantName: row.consultant_name || '',
+    quantity: Number(row.quantity || 0),
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    remark: row.remark || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
