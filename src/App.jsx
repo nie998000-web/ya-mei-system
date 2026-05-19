@@ -2745,6 +2745,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     }],
   })
   const [customerSearch, setCustomerSearch] = useState(data.customerName || data.customerPhone || '')
+  const [showCustomerResults, setShowCustomerResults] = useState(false)
+  const [validationError, setValidationError] = useState('')
   const employeeOptions = employees
     .filter((item) => !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
     .map((item) => [item.id, `${item.name}（${roleLabel(item.role)}）`])
@@ -2772,6 +2774,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       storeName: customer?.store || form.storeName,
     })
     setCustomerSearch(customer ? `${customer.name} ${customer.phone || ''}` : '')
+    setShowCustomerResults(false)
   }
   const updateItem = (index, patch) => {
     const orderItems = form.orderItems.map((item, itemIndex) => {
@@ -2821,9 +2824,36 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     const employee = employees.find((item) => String(item.id) === String(value))
     setForm({ ...form, [fieldId]: value, [fieldName]: employee?.name || '' })
   }
+  const validateAndSave = () => {
+    setValidationError('')
+    const orderItems = form.orderItems.filter((item) => item.projectId || item.projectName)
+    if (!form.customerId && !form.customerName) {
+      setValidationError('请选择顾客。')
+      throw new Error('请选择顾客。')
+    }
+    if (orderItems.length === 0) {
+      setValidationError('请至少添加 1 个项目。')
+      throw new Error('请至少添加 1 个项目。')
+    }
+    const invalidIndex = orderItems.findIndex((item) => !item.projectId || !item.projectName || Number(item.quantity || 0) <= 0)
+    if (invalidIndex >= 0) {
+      setValidationError(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
+      throw new Error(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
+    }
+    if (!form.serviceEmployeeName) {
+      setValidationError('请选择操作老师。')
+      throw new Error('请选择操作老师。')
+    }
+    if (!form.salesEmployeeName) {
+      setValidationError('请选择开单人。')
+      throw new Error('请选择开单人。')
+    }
+    return onSave({ ...form, orderItems, ...totals })
+  }
 
   return (
-    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={() => onSave({ ...form, ...totals })}>
+    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={validateAndSave} saveLabel="保存开单">
+      {validationError && <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{validationError}</div>}
       <div className="mb-4 rounded-lg bg-pink-50/70 p-4">
         <div className="mb-3 font-bold text-[#641631]">基础信息</div>
         <FormGrid>
@@ -2839,16 +2869,23 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
         <Field label="顾客搜索" full>
           <Input value={customerSearch} onChange={(value) => {
             setCustomerSearch(value)
+            setShowCustomerResults(true)
             if (!value) chooseCustomer(null)
           }} placeholder="输入顾客姓名或手机号搜索" />
-          <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-pink-100 bg-white">
+          {showCustomerResults && <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-pink-100 bg-white shadow-sm">
             {customerResults.length === 0 && <div className="px-4 py-3 text-sm text-[#8a4964]">未找到顾客，可先去顾客管理新增</div>}
             {customerResults.map((customer) => (
-              <button key={customer.id} type="button" onClick={() => chooseCustomer(customer)} className="block w-full border-b border-pink-50 px-4 py-3 text-left text-sm text-[#5f263c] hover:bg-pink-50">
-                {customer.name} · {customer.phone || '无手机号'} · {customer.store || '未设置门店'}
+              <button key={customer.id} type="button" onClick={() => chooseCustomer(customer)} className="block w-full cursor-pointer border-b border-pink-50 px-4 py-3 text-left text-sm text-[#5f263c] transition hover:bg-[#ffe4ef] hover:text-[#bd1657]">
+                {customer.name}｜{customer.phone || '无手机号'}｜{customer.store || '未设置门店'}
               </button>
             ))}
-          </div>
+          </div>}
+          {(form.customerName || form.customerPhone) && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-pink-100 bg-white px-4 py-3 text-sm text-[#5f263c]">
+              <span>已选择：{form.customerName || '-'}｜{form.customerPhone || '-'}｜{form.storeName || '-'}</span>
+              <button type="button" onClick={() => chooseCustomer(null)} className="rounded-md bg-pink-50 px-3 py-2 font-semibold text-[#c2185b] hover:bg-pink-100">清空顾客</button>
+            </div>
+          )}
         </Field>
         <Field label="顾客电话"><Input value={form.customerPhone} onChange={(value) => setForm({ ...form, customerPhone: value })} /></Field>
         </FormGrid>
@@ -2860,30 +2897,46 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
         </div>
         <div className="space-y-3">
           {form.orderItems.map((item, index) => (
-            <div key={item.id || index} className="grid grid-cols-1 gap-3 rounded-lg bg-pink-50/60 p-3 md:grid-cols-9">
-              <Field label="项目" full><Select value={item.projectId} onChange={(value) => chooseProject(index, value)} options={projects.length ? [['', '请选择项目'], ...projects.map((project) => [project.id, `${project.projectName} · 手工费${money(project.manualCommission)}`])] : [['', '暂无项目，请先到项目提成设置添加']]} /></Field>
-              <Field label="数量"><Input type="number" value={item.quantity} onChange={(value) => updateItem(index, { quantity: value })} /></Field>
-              <Field label="原价"><Input type="number" value={item.originalAmount} onChange={(value) => updateItem(index, { originalAmount: value })} /></Field>
-              <Field label="优惠"><Input type="number" value={item.discountAmount} onChange={(value) => updateItem(index, { discountAmount: value })} /></Field>
-              <Field label="实收"><Input type="number" value={item.actualAmount} onChange={(value) => updateItem(index, { actualAmount: value })} /></Field>
-              <Field label="消耗"><Input type="number" value={item.consumeAmount} onChange={(value) => updateItem(index, { consumeAmount: value })} /></Field>
-              <Field label="手工费"><Input value={money(item.manualCommissionAmount)} onChange={() => {}} /></Field>
-              <Field label="时长"><Input value={item.durationMinutes || ''} onChange={() => {}} /></Field>
-              <div className="flex items-end"><ActionButton tone="danger" onClick={() => removeItem(index)}>删除</ActionButton></div>
+            <div key={item.id || index} className="rounded-lg border border-pink-100 bg-pink-50/70 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="font-bold text-[#641631]">项目 {index + 1}</div>
+                <ActionButton tone="danger" onClick={() => removeItem(index)}>删除项目</ActionButton>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="md:col-span-2 xl:col-span-2">
+                  <Field label="项目选择"><Select value={item.projectId} onChange={(value) => chooseProject(index, value)} options={projects.length ? [['', '请选择项目'], ...projects.map((project) => [project.id, `${project.projectName} · 手工费${money(project.manualCommission)}`])] : [['', '暂无项目，请先到项目提成设置添加']]} /></Field>
+                </div>
+                <div className="min-w-[120px]"><Field label="数量"><Input type="number" value={item.quantity} onChange={(value) => updateItem(index, { quantity: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="项目时长"><Input value={item.durationMinutes || ''} onChange={() => {}} /></Field></div>
+                <div className="min-w-[120px]"><Field label="原价"><Input type="number" value={item.originalAmount} onChange={(value) => updateItem(index, { originalAmount: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="优惠金额"><Input type="number" value={item.discountAmount} onChange={(value) => updateItem(index, { discountAmount: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="实收金额"><Input type="number" value={item.actualAmount} onChange={(value) => updateItem(index, { actualAmount: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="消耗金额"><Input type="number" value={item.consumeAmount} onChange={(value) => updateItem(index, { consumeAmount: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="手工费"><Input value={money(item.manualCommissionAmount)} onChange={() => {}} /></Field></div>
+                <div className="min-w-[120px]"><Field label="项目分类"><Input value={item.projectCategory || ''} onChange={() => {}} /></Field></div>
+              </div>
             </div>
           ))}
         </div>
       </div>
-      <FormGrid>
+      <div className="mb-4 rounded-lg bg-pink-50/70 p-4">
+        <div className="mb-3 font-bold text-[#641631]">人员与收款</div>
+        <FormGrid>
+          <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={employeeOptions.length ? [['', '请选择操作老师'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
+          <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={employeeOptions.length ? [['', '请选择开单人'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
+          <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...employeeOptions]} /></Field>
+          <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
+          <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
+        </FormGrid>
+      </div>
+      <div className="rounded-lg border border-pink-100 bg-white p-4">
+        <div className="mb-3 font-bold text-[#641631]">订单汇总</div>
+        <FormGrid>
         <Field label="订单总实收"><Input value={money(totals.actualAmount)} onChange={() => {}} /></Field>
         <Field label="订单总消耗"><Input value={money(totals.consumeAmount)} onChange={() => {}} /></Field>
         <Field label="订单总手工费"><Input value={money(totals.manualCommissionAmount)} onChange={() => {}} /></Field>
-        <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
-        <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={employeeOptions.length ? [['', '请选择操作老师'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
-        <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={employeeOptions.length ? [['', '请选择开单人'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
-        <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...employeeOptions]} /></Field>
-        <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
-      </FormGrid>
+        </FormGrid>
+      </div>
     </Drawer>
   )
 }
@@ -3150,7 +3203,7 @@ function RankList({ rows }) {
   )
 }
 
-function Drawer({ title, onClose, onSave, children, successMessage }) {
+function Drawer({ title, onClose, onSave, children, successMessage, saveLabel = '保存' }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -3181,7 +3234,7 @@ function Drawer({ title, onClose, onSave, children, successMessage }) {
         {error && <div className="mt-5 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{error}</div>}
         <div className="mt-6 flex justify-end gap-3">
           <button onClick={onClose} className="rounded-lg border border-pink-100 px-6 py-3 font-semibold text-[#8b4d66] hover:bg-pink-50">取消</button>
-          <PrimaryButton onClick={handleSave}>{saving ? '保存中...' : '保存'}</PrimaryButton>
+          <PrimaryButton onClick={handleSave}>{saving ? '保存中...' : saveLabel}</PrimaryButton>
         </div>
       </div>
     </div>
@@ -3229,7 +3282,7 @@ function FormGrid({ children }) {
 }
 
 function Input({ value, onChange, type = 'text', placeholder = '' }) {
-  return <input type={type} placeholder={placeholder} value={value ?? ''} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100" />
+  return <input type={type} inputMode={type === 'number' ? 'decimal' : undefined} placeholder={placeholder} value={value ?? ''} onChange={(event) => onChange(event.target.value)} className="min-w-[120px] w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100" />
 }
 
 function Textarea({ value, onChange }) {
