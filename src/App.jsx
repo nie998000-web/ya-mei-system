@@ -60,6 +60,25 @@ function roleLabel(role) {
   return labels[role] || role || ''
 }
 
+function normalizeStaffRole(role) {
+  const value = String(role || '').trim().toLowerCase()
+  const roleMap = {
+    美容师: 'beautician',
+    店长: 'manager',
+    顾问: 'consultant',
+    技术人员: 'technical_teacher',
+    技术老师: 'technical_teacher',
+    总监: 'director',
+    管理员: 'admin',
+    区域经理: 'regional_manager',
+  }
+  return roleMap[role] || roleMap[String(role || '').trim()] || value
+}
+
+function staffOptionLabel(employee) {
+  return `${employee.name || '未命名'}｜${roleLabel(normalizeStaffRole(employee.role)) || employee.role || '未设置岗位'}｜${normalizeStoreName(employee.store) || employee.store || '未设置门店'}`
+}
+
 const customerImportHeaders = {
   name: ['姓名', '顾客姓名', '客户姓名', 'name'],
   phone: ['手机号', '电话', '手机', 'phone'],
@@ -2747,9 +2766,14 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const [customerSearch, setCustomerSearch] = useState(data.customerName || data.customerPhone || '')
   const [showCustomerResults, setShowCustomerResults] = useState(false)
   const [validationError, setValidationError] = useState('')
-  const employeeOptions = employees
+  const staffInStore = employees
     .filter((item) => !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
-    .map((item) => [item.id, `${item.name}（${roleLabel(item.role)}）`])
+  const staffOptionsByRoles = (roles) => staffInStore
+    .filter((item) => roles.includes(normalizeStaffRole(item.role)))
+    .map((item) => [item.id, staffOptionLabel(item)])
+  const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
+  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'director', 'admin', 'regional_manager'])
+  const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
   const customerResults = customers
     .filter((item) => {
@@ -2922,9 +2946,9 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       <div className="mb-4 rounded-lg bg-pink-50/70 p-4">
         <div className="mb-3 font-bold text-[#641631]">人员与收款</div>
         <FormGrid>
-          <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={employeeOptions.length ? [['', '请选择操作老师'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
-          <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={employeeOptions.length ? [['', '请选择开单人'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
-          <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...employeeOptions]} /></Field>
+          <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={serviceEmployeeOptions.length ? [['', '请选择操作老师'], ...serviceEmployeeOptions] : [['', '暂无可选操作人员，请先到员工管理添加美容师/店长/顾问/技术人员']]} /></Field>
+          <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={salesEmployeeOptions.length ? [['', '请选择开单人'], ...salesEmployeeOptions] : [['', '暂无可选开单人员，请先到员工管理添加店长/顾问/总监/管理员/区域经理']]} /></Field>
+          <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...consultantOptions]} /></Field>
           <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
           <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
         </FormGrid>
