@@ -63,6 +63,7 @@ function roleLabel(role) {
 function normalizeStaffRole(role) {
   const value = String(role || '').trim().toLowerCase()
   const roleMap = {
+    employee: 'beautician',
     美容师: 'beautician',
     店长: 'manager',
     顾问: 'consultant',
@@ -2767,7 +2768,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const [showCustomerResults, setShowCustomerResults] = useState(false)
   const [validationError, setValidationError] = useState('')
   const staffInStore = employees
-    .filter((item) => !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
+    .filter((item) => !lockedStore || !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
   const staffOptionsByRoles = (roles) => staffInStore
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
