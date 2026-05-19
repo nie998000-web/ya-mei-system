@@ -274,18 +274,13 @@ const emptyCashierOrder = {
 const emptyReview = {
   date: todayString(),
   store: defaultStores[0],
-  targetInvites: 20,
-  wechatCount: 0,
-  phoneCount: 0,
-  appointments: 0,
-  visits: 0,
-  deals: 0,
-  revenue: 0,
-  reason: '',
-  staffIssue: '',
-  rejectReason: '',
-  tomorrowAction: '',
-  summary: '',
+  goalCompleted: false,
+  unfinishedReason: '',
+  mainIssue: '',
+  tomorrowFocus: '',
+  tomorrowInviteTarget: '',
+  tomorrowKeyCustomers: '',
+  bossSupport: '',
 }
 
 const emptyEmployee = {
@@ -1633,9 +1628,7 @@ function ReviewsModule({ reviews, stores, role, profile, dailyReviewError, saveR
   const [error, setError] = useState('')
 
   const save = async (data) => {
-    const numeric = ['inviteRate', 'appointmentRate', 'arrivalRate', 'dealRate', 'dealAmount']
     const payload = { ...data, store: canChooseStore ? data.store : fixedStore }
-    numeric.forEach((key) => { payload[key] = Number(payload[key] || 0) })
     await saveReview(payload)
     setToast('保存成功')
     setEditing(null)
@@ -1655,13 +1648,13 @@ function ReviewsModule({ reviews, stores, role, profile, dailyReviewError, saveR
   }
 
   return (
-    <Panel title="每日复盘" subtitle="只看完成率、转化率和明日动作" action={canEditReviews ? <PrimaryButton onClick={() => setEditing({ date: todayString(), store: fixedStore || stores[0] || '', inviteRate: 0, appointmentRate: 0, arrivalRate: 0, dealRate: 0, dealAmount: 0, unfinishedReason: '', tomorrowAction: '' })}>新增复盘</PrimaryButton> : null}>
+    <Panel title="每日复盘" subtitle="日报负责数据，复盘负责管理动作" action={canEditReviews ? <PrimaryButton onClick={() => setEditing({ ...emptyReview, date: todayString(), store: fixedStore || stores[0] || '' })}>新增复盘</PrimaryButton> : null}>
       {toast && <Toast>{toast}</Toast>}
       {(error || dailyReviewError) && <ErrorNotice>{error || dailyReviewError}</ErrorNotice>}
       <Table>
         <thead>
           <tr>
-            {['日期', '门店', '邀约完成率', '预约转化率', '到店转化率', '成交转化率', '成交金额', '未完成原因', '明日动作', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+            {['日期', '门店', '目标完成', '未完成原因', '今日主要问题', '明日重点工作', '明日邀约目标', '明日重点顾客', '老板支持事项', '操作'].map((head) => <Th key={head}>{head}</Th>)}
           </tr>
         </thead>
         <tbody>
@@ -1676,13 +1669,13 @@ function ReviewsModule({ reviews, stores, role, profile, dailyReviewError, saveR
             <tr key={item.id} className="border-t border-pink-50">
               <Td>{item.date}</Td>
               <Td>{item.store || '未设置门店'}</Td>
-              <Td><MetricPill>{item.inviteRate ?? item.invite_rate ?? 0}%</MetricPill></Td>
-              <Td><MetricPill>{item.appointmentRate ?? item.appointment_rate ?? 0}%</MetricPill></Td>
-              <Td><MetricPill>{item.arrivalRate ?? item.arrival_rate ?? 0}%</MetricPill></Td>
-              <Td><MetricPill>{item.dealRate ?? item.deal_rate ?? 0}%</MetricPill></Td>
-              <Td>{money(item.dealAmount ?? item.deal_amount)}</Td>
-              <Td className="max-w-60">{item.unfinishedReason ?? item.unfinished_reason}</Td>
-              <Td className="max-w-60">{item.tomorrowAction ?? item.tomorrow_action}</Td>
+              <Td><Badge tone={item.goalCompleted ? 'success' : 'warning'}>{item.goalCompleted ? '已完成' : '未完成'}</Badge></Td>
+              <Td className="max-w-60">{item.unfinishedReason}</Td>
+              <Td className="max-w-60">{item.mainIssue}</Td>
+              <Td className="max-w-60">{item.tomorrowFocus}</Td>
+              <Td>{item.tomorrowInviteTarget || 0}人</Td>
+              <Td className="max-w-60">{item.tomorrowKeyCustomers}</Td>
+              <Td className="max-w-60">{item.bossSupport}</Td>
               <Td>
                 {canEditReviews ? (
                   <>
@@ -2821,13 +2814,13 @@ function ReviewDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, on
             <Select value={form.store} onChange={(value) => setForm({ ...form, store: value })} options={stores} />
           )}
         </Field>
-        <Field label="邀约完成率"><Input type="number" value={form.inviteRate} onChange={(value) => setForm({ ...form, inviteRate: value })} /></Field>
-        <Field label="预约转化率"><Input type="number" value={form.appointmentRate} onChange={(value) => setForm({ ...form, appointmentRate: value })} /></Field>
-        <Field label="到店转化率"><Input type="number" value={form.arrivalRate} onChange={(value) => setForm({ ...form, arrivalRate: value })} /></Field>
-        <Field label="成交转化率"><Input type="number" value={form.dealRate} onChange={(value) => setForm({ ...form, dealRate: value })} /></Field>
-        <Field label="成交金额"><Input type="number" value={form.dealAmount} onChange={(value) => setForm({ ...form, dealAmount: value })} /></Field>
+        <Field label="今日目标是否完成"><Select value={form.goalCompleted ? 'true' : 'false'} onChange={(value) => setForm({ ...form, goalCompleted: value === 'true' })} options={[['false', '未完成'], ['true', '已完成']]} /></Field>
+        <Field label="明日邀约目标人数"><Input type="number" value={form.tomorrowInviteTarget} onChange={(value) => setForm({ ...form, tomorrowInviteTarget: value })} /></Field>
         <Field label="未完成原因" full><Textarea value={form.unfinishedReason} onChange={(value) => setForm({ ...form, unfinishedReason: value })} /></Field>
-        <Field label="明日动作" full><Textarea value={form.tomorrowAction} onChange={(value) => setForm({ ...form, tomorrowAction: value })} /></Field>
+        <Field label="今日主要问题" full><Textarea value={form.mainIssue} onChange={(value) => setForm({ ...form, mainIssue: value })} /></Field>
+        <Field label="明日重点工作" full><Textarea value={form.tomorrowFocus} onChange={(value) => setForm({ ...form, tomorrowFocus: value })} /></Field>
+        <Field label="明日重点跟进顾客" full><Textarea value={form.tomorrowKeyCustomers} onChange={(value) => setForm({ ...form, tomorrowKeyCustomers: value })} /></Field>
+        <Field label="需要老板支持事项" full><Textarea value={form.bossSupport} onChange={(value) => setForm({ ...form, bossSupport: value })} /></Field>
       </FormGrid>
     </Drawer>
   )

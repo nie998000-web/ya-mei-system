@@ -119,17 +119,25 @@ export function toFollowup(row, profile) {
 }
 
 export function fromReview(row) {
+  let actionData = {}
+  try {
+    actionData = row.tomorrow_action ? JSON.parse(row.tomorrow_action) : {}
+  } catch {
+    actionData = { tomorrowFocus: row.tomorrow_action || '' }
+  }
+
   return {
     id: row.id,
     date: row.date,
     store: normalizeStoreName(row.store),
-    inviteRate: row.invite_rate,
-    appointmentRate: row.appointment_rate,
-    arrivalRate: row.arrival_rate,
-    dealRate: row.deal_rate,
-    dealAmount: row.deal_amount,
+    goalCompleted: Number(row.invite_rate || 0) > 0,
     unfinishedReason: row.unfinished_reason,
-    tomorrowAction: row.tomorrow_action,
+    mainIssue: actionData.mainIssue || '',
+    tomorrowFocus: actionData.tomorrowFocus || '',
+    tomorrowInviteTarget: actionData.tomorrowInviteTarget || '',
+    tomorrowKeyCustomers: actionData.tomorrowKeyCustomers || '',
+    bossSupport: actionData.bossSupport || '',
+    createdAt: row.created_at,
   }
 }
 
@@ -137,13 +145,19 @@ export function toReview(row, profile) {
   return {
     date: row.date,
     store: normalizeStoreForWrite(row.store, profile?.store),
-    invite_rate: Number(row.inviteRate || 0),
-    appointment_rate: Number(row.appointmentRate || 0),
-    arrival_rate: Number(row.arrivalRate || 0),
-    deal_rate: Number(row.dealRate || 0),
-    deal_amount: Number(row.dealAmount || 0),
+    invite_rate: row.goalCompleted ? 1 : 0,
+    appointment_rate: 0,
+    arrival_rate: 0,
+    deal_rate: 0,
+    deal_amount: 0,
     unfinished_reason: row.unfinishedReason || '',
-    tomorrow_action: row.tomorrowAction || '',
+    tomorrow_action: JSON.stringify({
+      mainIssue: row.mainIssue || '',
+      tomorrowFocus: row.tomorrowFocus || '',
+      tomorrowInviteTarget: row.tomorrowInviteTarget || '',
+      tomorrowKeyCustomers: row.tomorrowKeyCustomers || '',
+      bossSupport: row.bossSupport || '',
+    }),
   }
 }
 
