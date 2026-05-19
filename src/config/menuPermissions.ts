@@ -1,14 +1,13 @@
 export const menuPermissions = {
-  dashboard: ['admin', 'boss', 'manager', 'regional_manager', 'employee', 'beautician', 'consultant', 'technical_teacher'],
-  customers: ['admin', 'boss', 'manager', 'regional_manager', 'employee', 'beautician', 'consultant', 'technical_teacher'],
-  activation: ['admin', 'boss', 'manager', 'regional_manager', 'employee', 'beautician', 'consultant', 'technical_teacher'],
-  followups: ['admin', 'boss', 'manager', 'regional_manager', 'employee', 'beautician', 'consultant', 'technical_teacher'],
-  cashier: ['admin', 'boss', 'manager', 'employee', 'beautician', 'consultant', 'technical_teacher'],
+  dashboard: ['admin', 'boss', 'manager'],
+  customers: ['admin', 'boss', 'manager'],
+  activation: ['admin', 'boss', 'manager'],
+  cashier: ['admin', 'boss', 'manager'],
   reviews: ['admin', 'boss', 'manager'],
-  storeTargets: ['admin', 'boss', 'manager', 'regional_manager'],
+  storeTargets: ['admin', 'boss', 'manager'],
   performanceReports: ['admin', 'boss', 'manager'],
   performanceMonthly: ['admin', 'boss', 'manager'],
-  employees: ['admin', 'boss'],
+  employees: ['admin', 'boss', 'manager'],
 }
 
 export const sensitiveRoutes = {
@@ -25,7 +24,6 @@ export const menuLabels = {
   dashboard: '首页看板',
   customers: '顾客管理',
   activation: '未到店激活',
-  followups: '跟进记录',
   cashier: '开单收银',
   reviews: '每日复盘',
   storeTargets: '门店目标',

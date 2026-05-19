@@ -104,7 +104,7 @@ const customerImportHeaders = {
   lastVisit: ['最后到店时间', '最后到店日期', '最近到店日期', 'last_visit', 'lastVisit'],
 }
 
-const activationStatusOptions = ['未跟进', '已联系', '已预约', '已到店', '无意向']
+const activationStatusOptions = ['未联系', '已联系', '已预约', '已到店', '无意向']
 const paymentOptions = [
   ['cash', '现金'],
   ['wechat', '微信'],
@@ -149,10 +149,10 @@ function cashierOrderItems(order) {
 
 function normalizeActivationStatus(value) {
   const status = String(value || '').trim()
-  if (status === '未联系') return '未跟进'
+  if (status === '未跟进') return '未联系'
   if (status === '已微信' || status === '已电话') return '已联系'
   if (status === '暂不考虑' || status === '无效客户') return '无意向'
-  return activationStatusOptions.includes(status) ? status : '未跟进'
+  return activationStatusOptions.includes(status) ? status : '未联系'
 }
 
 function activationPriority(customer) {
@@ -220,9 +220,9 @@ const emptyCustomer = {
   owner: '',
   level: 'B客',
   lastVisit: todayString(),
-  lastFollowResult: '未跟进',
+  lastFollowResult: '未联系',
   nextFollowTime: '',
-  followStatus: '未跟进',
+  followStatus: '未联系',
   followNote: '',
   todayTaskCompletedAt: '',
 }
@@ -356,7 +356,7 @@ function App() {
   const scopedCashierOrders = filterRecordsByUserPermission(cloud.cashierOrders, currentUser)
   const scopedStoreTargets = filterRecordsByUserPermission(cloud.storeTargets, currentUser)
   const visibleNavItems = navItems.filter(([key]) => canViewMenu(currentUser, key, menuPermissions))
-  const activeAllowed = canViewMenu(currentUser, active, menuPermissions) || ['followups', 'reviews'].includes(active)
+  const activeAllowed = canViewMenu(currentUser, active, menuPermissions) || ['reviews'].includes(active)
   const visibleActive = activeAllowed ? active : 'noPermission'
 
   const pageProps = {
@@ -472,7 +472,6 @@ function App() {
         {visibleActive === 'customers' && <CustomersModule {...pageProps} />}
         {visibleActive === 'activation' && <ActivationModule {...pageProps} />}
         {visibleActive === 'cashier' && <CashierModule {...pageProps} />}
-        {visibleActive === 'followups' && <FollowupsModule {...pageProps} />}
         {visibleActive === 'reviews' && <ReviewsModule {...pageProps} />}
         {visibleActive === 'employees' && <EmployeesModule {...pageProps} />}
         {visibleActive === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
@@ -579,7 +578,7 @@ function ErrorScreen({ message, onRetry }) {
   )
 }
 
-function Dashboard({ customers, employees, followups, reviews, stores, role, profile, setActive }) {
+function Dashboard({ customers, employees, followups, cashierOrders, stores, role, profile, setActive }) {
   const allStoreLabel = '全部门店'
   const [selectedStore, setSelectedStore] = useState(allStoreLabel)
   const normalizedRole = String(role || '').trim()
@@ -599,16 +598,18 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
     setSelectedStore(allStoreLabel)
   }, [isBoss])
   const visitDays = (value) => (value ? daysSince(value) : null)
+  const safeCustomers = Array.isArray(customers) ? customers : []
+  const safeEmployees = Array.isArray(employees) ? employees : []
+  const safeFollowups = Array.isArray(followups) ? followups : []
+  const safeOrders = Array.isArray(cashierOrders) ? cashierOrders : []
   const customerInScope = (customer) => {
     const customerStore = normalizeStoreName(customer.store)
     if (isBoss) return !filterByDashboardStore || customerStore === dashboardStoreName
     if (isBeautician) return !profile?.name || customer.owner === profile.name
     return customerStore === profileStore
   }
-  const viewCustomers = customers.filter(customerInScope)
-  const thirtyNotVisited = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 30).length
-  const sixtyNotVisited = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 60).length
-  const ninetyHighRisk = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90).length
+  const viewCustomers = safeCustomers.filter(customerInScope)
+  const customerById = new Map(viewCustomers.map((item) => [String(item.id), item]))
   const employeeStore = (employee) => normalizeStoreName(employee.store)
   const employeeInScope = (employee) => {
     const store = employeeStore(employee)
@@ -617,39 +618,92 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
     if (isBeautician) return employee.name === profile?.name
     return store === profileStore
   }
-  const viewEmployees = employees.filter(employeeInScope)
-  const todayFollowupTotal = viewEmployees.reduce((sum, item) => sum + Number(item.today_followups || 0), 0)
-  const todayAppointments = viewEmployees.reduce((sum, item) => sum + Number(item.today_appointments || 0), 0)
-  const todayVisits = viewEmployees.reduce((sum, item) => sum + Number(item.today_arrivals || 0), 0)
-  const revenueStores = filterByDashboardStore ? [dashboardStoreName].filter(Boolean) : storeOptions
-  const revenueEmployees = viewEmployees
-  const storeRevenue = revenueStores.map((store) => {
-    const storeEmployees = revenueEmployees
-      .filter((item) => employeeStore(item) === store)
-    // 今日数据来自 employee_daily_stats，员工列表已在读取时按当天合并。
-    const employeeAmount = storeEmployees.reduce((sum, item) => sum + Number(item.today_sales || 0), 0)
-    return {
-      store,
-      employees: storeEmployees,
-      revenue: employeeAmount,
-    }
+  const viewEmployees = safeEmployees.filter(employeeInScope)
+  const orderStore = (order) => normalizeStoreName(order.storeName || order.store)
+  const orderBelongsToUser = (order) => {
+    if (!isBeautician) return true
+    const name = profile?.name || ''
+    return order.serviceEmployeeName === name || order.salesEmployeeName === name || order.consultantName === name
+  }
+  const orderInScope = (order) => {
+    if (order.status === 'voided') return false
+    const store = orderStore(order)
+    if (!orderBelongsToUser(order)) return false
+    if (isBoss) return !filterByDashboardStore || store === dashboardStoreName
+    return store === profileStore
+  }
+  const todayOrders = safeOrders.filter((order) => orderInScope(order) && formatDateOnly(order.date) === today)
+  const customerKeyOfOrder = (order) => String(order.customerId || order.customerPhone || order.customerName || order.id)
+  const todayCustomerKeys = unique(todayOrders.map(customerKeyOfOrder))
+  const todayRevenue = todayOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0)
+  const todayArrivals = todayCustomerKeys.length
+  const todayNewCustomers = unique(todayOrders
+    .filter((order) => customerById.get(String(order.customerId))?.isNewCustomer)
+    .map(customerKeyOfOrder)).length
+  const followupInScope = (item) => {
+    const store = normalizeStoreName(item.store)
+    if (isBoss) return !filterByDashboardStore || store === dashboardStoreName
+    if (isBeautician) return item.owner === profile?.name
+    return store === profileStore
+  }
+  const todayFollowups = safeFollowups.filter((item) => followupInScope(item) && formatDateOnly(item.createdAt) === today)
+  const todayAppointments = todayFollowups.filter((item) => item.hasAppointment).length
+  const todayReturnRate = percent(todayArrivals, todayAppointments)
+  const todayUnitPrice = todayArrivals > 0 ? todayRevenue / todayArrivals : 0
+  const storeRanking = storeOptions
+    .filter((store) => !filterByDashboardStore || store === dashboardStoreName)
+    .map((store) => {
+      const storeOrders = safeOrders.filter((order) => order.status !== 'voided' && formatDateOnly(order.date) === today && orderStore(order) === store)
+      const storeFollowups = safeFollowups.filter((item) => formatDateOnly(item.createdAt) === today && normalizeStoreName(item.store) === store)
+      const arrivals = unique(storeOrders.map(customerKeyOfOrder)).length
+      const appointments = storeFollowups.filter((item) => item.hasAppointment).length
+      return {
+        store,
+        revenue: storeOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0),
+        arrivals,
+        returnRate: percent(arrivals, appointments),
+      }
+    })
+    .sort((a, b) => b.revenue - a.revenue)
+  const lowRevenueStores = storeRanking.filter((item) => item.revenue < 1000).length
+  const dueCustomers = viewCustomers.filter((item) => item.nextFollowTime === today || normalizeActivationStatus(item.followStatus || item.lastFollowResult) === '未联系')
+  const unfinishedAppointmentCount = safeFollowups.filter((item) => {
+    if (!followupInScope(item)) return false
+    const appointmentDate = formatDateOnly(item.appointmentTime || item.nextFollowTime || item.createdAt)
+    return item.hasAppointment && appointmentDate === today && !item.hasDeal
+  }).length
+  const vipNoVisit = viewCustomers.filter((item) => {
+    const level = String(item.level || '').trim()
+    const followDays = item.lastFollowTime ? daysSince(item.lastFollowTime) : 999
+    return (level === 'A客/VIP' || level === 'A类顾客') && followDays >= 30
+  }).length
+  const overSixtyNotVisited = viewCustomers.filter((item) => visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 60)
+  const repeatedNoAppointment = viewCustomers.filter((customer) => {
+    const records = safeFollowups.filter((item) => String(item.customerId) === String(customer.id) || item.customerPhone === customer.phone)
+    return records.length >= 3 && records.every((item) => !item.hasAppointment)
   })
-  const maxRevenue = Math.max(...storeRevenue.map((item) => item.revenue), 1)
-  const dashboardRevenue = storeRevenue.reduce((sum, item) => sum + item.revenue, 0)
+  const silentHighValueCustomers = viewCustomers.filter((customer) => {
+    const customerOrders = safeOrders.filter((order) => order.status !== 'voided' && String(order.customerId) === String(customer.id))
+    const amount = customerOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0)
+    const followDays = customer.lastFollowTime ? daysSince(customer.lastFollowTime) : 999
+    return amount >= 10000 && followDays >= 30
+  })
   const staffRank = viewEmployees
     .filter((item) => item.role === 'beautician')
     .map((item) => ({
       id: item.id,
       name: item.name || '未填写',
       store: employeeStore(item),
-      todayFollowups: Number(item.today_followups || 0),
-      todayAppointments: Number(item.today_appointments || 0),
-      followupRevenue: Number(item.today_sales || 0),
+      todayFollowups: todayFollowups.filter((record) => record.owner === item.name).length,
+      todayAppointments: todayFollowups.filter((record) => record.owner === item.name && record.hasAppointment).length,
+      followupRevenue: todayOrders
+        .filter((order) => order.salesEmployeeName === item.name || order.serviceEmployeeName === item.name)
+        .reduce((sum, order) => sum + Number(order.actualAmount || 0), 0),
     }))
-    .sort((a, b) => b.todayFollowups - a.todayFollowups)
+    .sort((a, b) => b.todayFollowups - a.todayFollowups || b.followupRevenue - a.followupRevenue)
     .slice(0, 5)
   const todoCustomers = viewCustomers
-    .filter((item) => (visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90) || item.nextFollowTime === today || item.followStatus === '未联系')
+    .filter((item) => (visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90) || item.nextFollowTime === today || normalizeActivationStatus(item.followStatus || item.lastFollowResult) === '未联系')
     .sort((a, b) => (visitDays(b.lastVisit) || 0) - (visitDays(a.lastVisit) || 0))
     .slice(0, 6)
 
@@ -694,10 +748,12 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
   }
 
   const cards = [
-    ['今日跟进', todayFollowupTotal, '条', '今日员工跟进合计'],
-    ['90天高风险', ninetyHighRisk, '人', '优先由店长盯'],
-    ['今日到店', todayVisits, '人', '员工今日到店合计'],
-    ['今日成交', money(dashboardRevenue), '', '员工今日业绩合计'],
+    ['今日总业绩', money(todayRevenue), '', '来自开单收银'],
+    ['今日到店人数', todayArrivals, '人', '按开单顾客去重'],
+    ['今日新客人数', todayNewCustomers, '人', '来自顾客新客标记'],
+    ['今日预约人数', todayAppointments, '人', '来自今日跟进'],
+    ['今日回店率', todayReturnRate, '', '到店 / 预约'],
+    ['今日客单价', money(todayUnitPrice), '', '业绩 / 到店人数'],
   ]
 
   return (
@@ -711,11 +767,11 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
           />
         </Panel>
       )}
-      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-4 xl:grid-cols-6">
         {cards.map(([label, value, unit, hint]) => (
-          <div key={label} className={`rounded-lg border bg-white p-5 shadow-sm ${label.includes('90天') ? 'border-red-200 ring-2 ring-red-100' : 'border-pink-100'}`}>
+          <div key={label} className="rounded-lg border border-pink-100 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#9b6078]">{label}</div>
-            <div className={`mt-3 text-4xl font-bold ${label.includes('90天') ? 'text-red-600' : 'text-[#bd1657]'}`}>
+            <div className="mt-3 text-3xl font-bold text-[#bd1657]">
               {value}
               <span className="ml-1 text-base font-semibold text-[#b9859a]">{unit}</span>
             </div>
@@ -724,47 +780,53 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
         ))}
       </section>
 
-      <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        {[
-          ['30天未到店', thirtyNotVisited],
-          ['60天未到店', sixtyNotVisited],
-          ['今日已邀约', todayAppointments],
-          ['老客回店率', percent(todayVisits, thirtyNotVisited)],
-        ].map(([label, value]) => (
-          <div key={label} className="rounded-lg border border-pink-100 bg-white px-5 py-4 shadow-sm">
-            <div className="text-sm text-[#9b6078]">{label}</div>
-            <div className="mt-2 text-2xl font-bold text-[#641631]">{value}</div>
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_1fr]">
+        <Panel
+          title="今日必须处理"
+          subtitle="店长早上先盯这四件事"
+          action={<PrimaryButton onClick={() => setActive('activation')}>去激活顾客</PrimaryButton>}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <MetricBox label="今日待跟进顾客" value={`${dueCustomers.length} 人`} />
+            <MetricBox label="今日未完成预约" value={`${unfinishedAppointmentCount} 人`} />
+            <MetricBox label="今日未回访A客" value={`${vipNoVisit} 人`} />
+            <MetricBox label="今日低业绩门店" value={`${lowRevenueStores} 家`} />
           </div>
-        ))}
+        </Panel>
+
+        <Panel title="高风险客户提醒" subtitle="只提醒要处理的风险，不做重复录入">
+          <div className="grid gap-3">
+            {[
+              ['超过60天未到店顾客', overSixtyNotVisited.length, 'danger'],
+              ['A客/VIP超过30天未联系顾客', vipNoVisit, 'warning'],
+              ['连续多次跟进未预约顾客', repeatedNoAppointment.length, 'pink'],
+              ['高消费但近期沉默顾客', silentHighValueCustomers.length, 'light'],
+            ].map(([label, value, tone]) => (
+              <div key={label} className="flex items-center justify-between rounded-lg bg-pink-50 px-4 py-3">
+                <span className="font-semibold text-[#6b344a]">{label}</span>
+                <Badge tone={tone}>{value} 人</Badge>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.1fr_1fr]">
-        <Panel
-          title="今日先处理"
-          subtitle="按风险从高到低排序，店长早上打开就能看到"
-          action={<PrimaryButton onClick={() => setActive('activation')}>去激活顾客</PrimaryButton>}
-        >
-          <div className="grid gap-3">
-            {todoCustomers.map((item) => (
-              <div key={item.id} className={`flex items-center justify-between rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50' : 'border-pink-100 bg-pink-50'}`}>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-bold text-[#5f263c]">{item.name}</span>
-                    <LevelBadge level={item.level} />
-                    <RiskBadge days={visitDays(item.lastVisit) || item.notVisitedDays || 0} />
-                  </div>
-                  <div className="mt-2 text-sm text-[#83536a]">{item.store} · {item.owner}</div>
-                </div>
-                <div className="text-right text-sm text-[#83536a]">
-                  <div>状态：{item.followStatus || '未联系'}</div>
-                  <div>下次：{item.nextFollowTime || '未定'}</div>
-                </div>
+        <Panel title="今日门店排行榜" subtitle="按今日开单业绩从高到低排序">
+          <div className="space-y-3">
+            {storeRanking.map((item, index) => (
+              <div key={item.store} className="grid grid-cols-[44px_1fr_auto_auto_auto] items-center gap-3 rounded-lg border border-pink-100 bg-white px-4 py-4">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-pink-50 text-sm font-bold text-[#c2185b]">{index + 1}</span>
+                <div className="font-bold text-[#5f263c]">{item.store}</div>
+                <div className="text-right text-sm text-[#7b4f64]"><b className="block text-[#bd1657]">{money(item.revenue)}</b>今日业绩</div>
+                <div className="text-right text-sm text-[#7b4f64]"><b className="block text-[#bd1657]">{item.arrivals}</b>到店</div>
+                <div className="text-right text-sm text-[#7b4f64]"><b className="block text-[#bd1657]">{item.returnRate}</b>回店率</div>
               </div>
             ))}
           </div>
         </Panel>
 
-        <Panel title="美容师复盘">
+        <Panel title="员工跟进提醒">
           <div className="space-y-3">
             {staffRank.map((item, index) => (
               <div key={item.id} className="flex items-center justify-between rounded-lg bg-pink-50 px-4 py-4">
@@ -782,34 +844,7 @@ function Dashboard({ customers, employees, followups, reviews, stores, role, pro
                 </div>
               </div>
             ))}
-          </div>
-        </Panel>
-      </section>
-
-      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1.2fr_1fr]">
-        <Panel title="4家门店业绩对比">
-          <div className="space-y-5">
-            {storeRevenue.map((item) => (
-              <div key={item.store}>
-                <div className="mb-2 flex justify-between text-sm">
-                  <span className="font-semibold text-[#643044]">{item.store}</span>
-                  <span className="font-bold text-[#bd1657]">{money(item.revenue)}</span>
-                </div>
-                <div className="mb-2 text-xs font-bold text-[#643044]">总业绩：{money(item.revenue)}</div>
-                <div className="h-3 rounded-full bg-pink-50">
-                  <div className="h-3 rounded-full bg-[#c2185b]" style={{ width: `${(item.revenue / maxRevenue) * 100}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="今日操作入口">
-          <div className="grid grid-cols-2 gap-3">
-            <QuickButton onClick={() => setActive('activation')}>处理未到店顾客</QuickButton>
-            <QuickButton onClick={() => setActive('followups')}>登记跟进结果</QuickButton>
-            <QuickButton onClick={() => setActive('reviews')}>填写每日复盘</QuickButton>
-            <QuickButton onClick={() => setActive('customers')}>查找顾客档案</QuickButton>
+            {staffRank.length === 0 && <div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工跟进数据</div>}
           </div>
         </Panel>
       </section>
@@ -1044,8 +1079,9 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
   )
 }
 
-function ActivationModule({ customers, employees, stores, profile, role, updateCustomerStatus }) {
+function ActivationModule({ customers, employees, followups, stores, profile, role, updateCustomerStatus, saveFollowup }) {
   const [drafts, setDrafts] = useState({})
+  const [historyOpen, setHistoryOpen] = useState({})
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const canChooseStore = isBossRole(role)
@@ -1061,6 +1097,12 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
   const storeFilteredCustomers = activationCustomers.filter((item) => filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store)
   const ownerOptions = ['全部美容师', ...unique(storeFilteredCustomers.map((item) => item.owner).filter(Boolean))]
   const levelFilterOptions = ['全部等级', ...levelOptions]
+  const safeFollowups = Array.isArray(followups) ? followups : []
+  const customerFollowups = (customer) => safeFollowups
+    .filter((item) => String(item.customerId) === String(customer.id) || (customer.phone && item.customerPhone === customer.phone))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+  const latestFollowupOf = (customer) => customerFollowups(customer)[0] || null
+  const statusFromFollowup = (item) => normalizeActivationStatus(item?.issueType || item?.feedback || '')
   const filteredCustomers = storeFilteredCustomers.filter((item) => {
     const ownerMatch = filters.owner === '全部美容师' || item.owner === filters.owner
     const levelMatch = filters.level === '全部等级' || item.level === filters.level
@@ -1098,13 +1140,14 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
     const draft = drafts[item.id] || {}
     const status = statusOf(item)
     const nextFollowTime = draft.nextFollowTime ?? item.nextFollowTime
-    return status === '未跟进' || !nextFollowTime || nextFollowTime === today
+    return status === '未联系' || !nextFollowTime || nextFollowTime === today
   }).length
 
   const getDraft = (customer) => ({
     followStatus: normalizeActivationStatus(customer.followStatus || customer.lastFollowResult),
     nextFollowTime: customer.nextFollowTime || '',
     followNote: customer.followNote || '',
+    method: '电话',
     todayTaskCompletedAt: customer.todayTaskCompletedAt || '',
     ...(drafts[customer.id] || {}),
   })
@@ -1128,6 +1171,35 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
 
   const completeTodayTask = (customer) => {
     saveActivation(customer, { todayTaskCompletedAt: new Date().toISOString() })
+  }
+
+  const saveActivationFollowup = async (customer, latest = null) => {
+    setError('')
+    const draft = getDraft(customer)
+    try {
+      await saveFollowup({
+        id: latest?.id,
+        customerId: customer.id,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        store: customer.store,
+        owner: profile?.role === 'beautician' ? profile?.name || customer.owner : customer.owner || profile?.name || '',
+        method: draft.method || '电话',
+        content: draft.followNote || '',
+        feedback: draft.followStatus,
+        issueType: draft.followStatus,
+        hasAppointment: draft.followStatus === '已预约',
+        appointmentTime: draft.followStatus === '已预约' ? draft.nextFollowTime || '' : '',
+        hasDeal: draft.followStatus === '已到店',
+        dealAmount: 0,
+        nextFollowTime: draft.nextFollowTime,
+      })
+      await updateCustomerStatus(customer.id, draft)
+      setToast(latest ? '跟进已更新' : '跟进已新增')
+      window.setTimeout(() => setToast(''), 1800)
+    } catch (followupError) {
+      setError(followupError.message || '保存跟进失败')
+    }
   }
 
   const groups = [
@@ -1205,6 +1277,8 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
               const draft = getDraft(item)
               const priority = activationPriority(item)
               const completed = isCompletedToday(item)
+              const latestFollowup = latestFollowupOf(item)
+              const history = customerFollowups(item)
               return (
                 <div key={item.id} className={`rounded-lg border p-4 ${item.notVisitedDays >= 90 ? 'border-red-200 bg-red-50 ring-1 ring-red-100' : 'border-pink-100 bg-white'}`}>
                   <div className="flex items-start justify-between gap-3">
@@ -1219,7 +1293,21 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
                       <div className="mt-2 text-sm text-[#7b4f64]">电话：{item.phone || ''}</div>
                       <div className="mt-1 text-sm text-[#7b4f64]">门店：{item.store || ''} · 美容师：{item.owner || ''}</div>
                       <div className="mt-1 text-sm text-[#7b4f64]">最后到店日期：{item.lastVisit || '未记录'} · 已 {item.notVisitedDays} 天未到店</div>
-                      <div className="mt-2 rounded-md bg-white/80 px-3 py-2 text-sm text-[#674158]">上次结果：{normalizeActivationStatus(item.lastFollowResult || item.followStatus)}</div>
+                      <div className="mt-3 rounded-lg bg-white/80 px-3 py-3 text-sm text-[#674158]">
+                        <div className="mb-2 font-bold text-[#5f263c]">最近一次跟进</div>
+                        {latestFollowup ? (
+                          <div className="grid gap-1 md:grid-cols-2">
+                            <span>时间：{formatDateTime(latestFollowup.createdAt) || '未记录'}</span>
+                            <span>跟进人：{latestFollowup.owner || '-'}</span>
+                            <span>方式：{latestFollowup.method || '-'}</span>
+                            <span>状态：{statusFromFollowup(latestFollowup)}</span>
+                            <span className="md:col-span-2">备注：{latestFollowup.content || latestFollowup.feedback || '-'}</span>
+                            <span className="md:col-span-2">下次跟进日期：{latestFollowup.nextFollowTime || '未定'}</span>
+                          </div>
+                        ) : (
+                          <div>暂无历史跟进，请先新增跟进。</div>
+                        )}
+                      </div>
                     </div>
                     <div className="text-right text-sm text-[#8a5268]">
                       <div>下次跟进</div>
@@ -1245,7 +1333,11 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
                     ))}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[190px_1fr_auto_auto] md:items-start">
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[150px_190px_1fr] md:items-start">
+                    <label>
+                      <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进方式</span>
+                      <Select value={draft.method} onChange={(value) => updateDraft(item.id, { method: value })} options={followMethods} />
+                    </label>
                     <label>
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">下次跟进日期</span>
                       <Input type="date" value={draft.nextFollowTime} onChange={(value) => updateDraft(item.id, { nextFollowTime: value })} />
@@ -1254,13 +1346,33 @@ function ActivationModule({ customers, employees, stores, profile, role, updateC
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进内容备注</span>
                       <Textarea value={draft.followNote} onChange={(value) => updateDraft(item.id, { followNote: value })} />
                     </label>
-                    <div className="pt-7">
-                      <PrimaryButton onClick={() => saveActivation(item)}>保存跟进</PrimaryButton>
-                    </div>
-                    <div className="pt-7">
-                      <SecondaryButton onClick={() => completeTodayTask(item)}>{completed ? '已完成' : '今日已完成'}</SecondaryButton>
-                    </div>
                   </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <PrimaryButton onClick={() => saveActivationFollowup(item)}>新增跟进</PrimaryButton>
+                    {latestFollowup && <SecondaryButton onClick={() => saveActivationFollowup(item, latestFollowup)}>编辑最近跟进</SecondaryButton>}
+                    <SecondaryButton onClick={() => saveActivation(item)}>只保存状态</SecondaryButton>
+                    <SecondaryButton onClick={() => completeTodayTask(item)}>{completed ? '已完成' : '今日已完成'}</SecondaryButton>
+                    <SecondaryButton onClick={() => setHistoryOpen((current) => ({ ...current, [item.id]: !current[item.id] }))}>
+                      {historyOpen[item.id] ? '收起历史跟进' : `查看历史跟进（${history.length}）`}
+                    </SecondaryButton>
+                  </div>
+                  {historyOpen[item.id] && (
+                    <div className="mt-4 space-y-2 rounded-lg bg-pink-50 p-3">
+                      {history.length === 0 && <div className="text-sm text-[#8a4964]">暂无历史跟进</div>}
+                      {history.map((record) => (
+                        <div key={record.id} className="rounded-lg bg-white px-3 py-3 text-sm text-[#674158] ring-1 ring-pink-100">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={statusFromFollowup(record) === '已预约' ? 'success' : statusFromFollowup(record) === '无意向' ? 'light' : 'pink'}>{statusFromFollowup(record)}</Badge>
+                            <span>{formatDateTime(record.createdAt) || '未记录时间'}</span>
+                            <span>{record.owner || '-'}</span>
+                            <span>{record.method || '-'}</span>
+                          </div>
+                          <div className="mt-2">备注：{record.content || record.feedback || '-'}</div>
+                          <div className="mt-1">下次跟进：{record.nextFollowTime || '未定'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -1805,6 +1917,7 @@ function PerformanceReportsModule({ cashierOrders, customers, stores, role, prof
     .filter(Boolean))
   const totalNewCustomers = newCustomerKeys.size
   const averageOrder = totalArrivals > 0 ? totalSales / totalArrivals : 0
+  const todayUpsellAmount = todayOrders.reduce((sum, order) => sum + Number(order.upsellAmount || 0), 0)
   const employeeRank = Object.values(todayOrders.reduce((map, order) => {
     const name = order.salesEmployeeName || order.serviceEmployeeName || '未设置员工'
     const key = `${normalizeStoreName(order.storeName || order.store)}-${name}`
@@ -1847,7 +1960,7 @@ function PerformanceReportsModule({ cashierOrders, customers, stores, role, prof
     <div className="space-y-5">
       <Panel title="员工业绩日报" subtitle="自动读取今日开单收银数据，不再人工录入">
         {cashierOrderError && <ErrorNotice>{cashierOrderError}</ErrorNotice>}
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
           <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
             <div className="text-sm text-pink-100">今日总业绩</div>
             <div className="mt-2 text-3xl font-black">{money(totalSales)}</div>
@@ -1863,6 +1976,10 @@ function PerformanceReportsModule({ cashierOrders, customers, stores, role, prof
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
             <div className="text-sm text-[#9a6078]">今日客单价</div>
             <div className="mt-2 text-3xl font-black text-[#bd1657]">{money(averageOrder)}</div>
+          </div>
+          <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <div className="text-sm text-[#9a6078]">今日升单金额</div>
+            <div className="mt-2 text-3xl font-black text-orange-600">{money(todayUpsellAmount)}</div>
           </div>
         </div>
         <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
@@ -1918,29 +2035,7 @@ function salaryRecordSource(performanceRecords, performanceReports, cashierOrder
   const activeCashierOrders = (Array.isArray(cashierOrders) ? cashierOrders : [])
     .filter((order) => order.status !== 'voided')
     .map(cashierOrderToPerformanceRecord)
-  if (activeCashierOrders.length > 0) return activeCashierOrders
-  if (Array.isArray(performanceRecords) && performanceRecords.length > 0) return performanceRecords
-  if (Array.isArray(performanceReports) && performanceReports.length > 0) {
-    return performanceReports.map((item) => ({
-      id: item.id,
-      date: item.date,
-      month: String(item.date || '').slice(0, 7),
-      storeName: normalizeStoreName(item.store),
-      employee: item.employee,
-      salesEmployeeName: item.employee,
-      serviceEmployeeName: item.employee,
-      amount: Number(item.totalSales || 0),
-      consumeAmount: Number(item.consumeSales || 0),
-      arrivals: Number(item.arrivals || 0),
-      newCustomers: Number(item.newCustomers || 0),
-      repeatCustomers: Number(item.repeatCustomers || 0),
-      serviceSales: Number(item.serviceSales || 0),
-      consumeSales: Number(item.consumeSales || 0),
-      cashSales: Number(item.cashSales || 0),
-      upsellAmount: Number(item.upsellAmount || 0),
-    }))
-  }
-  return []
+  return activeCashierOrders
 }
 
 function buildMonthlySalaryRows({ employees, records, month, store, employee, role }) {
@@ -2135,7 +2230,7 @@ function StoreTargetsModule({ performanceReports, cashierOrders, storeTargets, s
       store: item.storeName,
       totalSales: Number(item.actualAmount || 0),
     }))
-  const monthReports = (cashierReports.length ? cashierReports : performanceReports).filter((item) => String(item.date || '').startsWith(activeMonth))
+  const monthReports = cashierReports.filter((item) => String(item.date || '').startsWith(activeMonth))
   const targetOf = (store) => storeTargets.find((item) => item.month === activeMonth && normalizeStoreName(item.store) === store)
   const salesOf = (store, matcher) => monthReports
     .filter((item) => normalizeStoreName(item.store) === store && (!matcher || matcher(item)))
