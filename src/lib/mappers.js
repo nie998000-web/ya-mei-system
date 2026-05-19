@@ -46,14 +46,8 @@ export function fromEmployee(row) {
     phone: row.phone || '',
     store: row.store || '',
     role: row.role || 'beautician',
-    baseSalary: Number(row.base_salary ?? 0),
-    socialSecurityAllowance: Number(row.social_security_allowance ?? 0),
-    fullAttendanceBonus: Number(row.full_attendance_bonus ?? 0),
-    senioritySalary: Number(row.seniority_salary ?? 0),
     entryDate: row.entry_date || '',
     isActive: row.is_active !== false,
-    isTechnicalDepartment: Boolean(row.is_technical_department),
-    salaryPlanType: row.salary_plan_type || '',
     today_followups: row.today_followups ?? 0,
     today_appointments: row.today_appointments ?? 0,
     today_arrivals: row.today_arrivals ?? 0,
@@ -73,14 +67,8 @@ export function toEmployee(row, profile) {
     store: normalizeStoreForWrite(row.store, profile?.store),
     role: row.role || 'beautician',
     note: row.note || '',
-    base_salary: Number(row.baseSalary || 0),
-    social_security_allowance: Number(row.socialSecurityAllowance || 0),
-    full_attendance_bonus: Number(row.fullAttendanceBonus || 0),
-    seniority_salary: Number(row.senioritySalary || 0),
     entry_date: row.entryDate || null,
     is_active: row.isActive !== false,
-    is_technical_department: Boolean(row.isTechnicalDepartment),
-    salary_plan_type: row.salaryPlanType || '',
     updated_at: new Date().toISOString(),
   }
 }
@@ -241,7 +229,6 @@ export function fromProjectCommission(row) {
     id: row.id,
     projectName: row.project_name || '',
     category: row.category || 'other',
-    manualCommission: Number(row.manual_commission || 0),
     durationMinutes: row.duration_minutes ?? '',
     unit: row.unit || '次',
     isActive: row.is_active !== false,
@@ -255,7 +242,6 @@ export function toProjectCommission(row) {
   return {
     project_name: row.projectName || '',
     category: row.category || 'other',
-    manual_commission: Number(row.manualCommission || 0),
     duration_minutes: row.durationMinutes === '' || row.durationMinutes == null ? null : Number(row.durationMinutes),
     unit: row.unit || '次',
     is_active: row.isActive !== false,
@@ -286,7 +272,7 @@ export function fromPerformanceRecord(row) {
     consultantId: row.consultant_id,
     consultantName: row.consultant_name || '',
     quantity: Number(row.quantity || 0),
-    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    manualCommissionAmount: 0,
     remark: row.remark || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -306,8 +292,8 @@ export function fromCashierOrder(row) {
     discountAmount: Number(row.discount_amount || 0),
     actualAmount: Number(row.actual_amount || 0),
     consumeAmount: Number(row.consume_amount || 0),
-    manualCommission: Number(row.quantity || 1) > 0 ? Number(row.manual_commission_amount || 0) / Number(row.quantity || 1) : Number(row.manual_commission_amount || 0),
-    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    manualCommission: 0,
+    manualCommissionAmount: 0,
     durationMinutes: '',
   }
   return {
@@ -337,7 +323,7 @@ export function fromCashierOrder(row) {
     salesEmployeeName: row.sales_employee_name || '',
     consultantId: row.consultant_id,
     consultantName: row.consultant_name || '',
-    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    manualCommissionAmount: 0,
     remark: row.remark || '',
     status: row.status || 'active',
     orderItems: row.orderItems?.length ? row.orderItems : (row.project_name ? [fallbackItem] : []),
@@ -359,7 +345,6 @@ export function toCashierOrder(row, profile) {
       ? Math.max(originalAmount - discountAmount, 0)
       : Number(row.actualAmount || 0)
   const consumeAmount = items.length ? items.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : Number(row.consumeAmount || 0)
-  const manualCommissionAmount = items.length ? items.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0) : Number(row.manualCommission || 0) * quantity
   return {
     order_no: row.orderNo || '',
     date,
@@ -384,7 +369,7 @@ export function toCashierOrder(row, profile) {
     sales_employee_name: row.salesEmployeeName || '',
     consultant_id: row.consultantId || null,
     consultant_name: row.consultantName || '',
-    manual_commission_amount: manualCommissionAmount,
+    manual_commission_amount: 0,
     remark: row.remark || '',
     status: row.status || 'active',
     updated_at: new Date().toISOString(),
@@ -403,15 +388,14 @@ export function fromCashierOrderItem(row) {
     discountAmount: Number(row.discount_amount || 0),
     actualAmount: Number(row.actual_amount || 0),
     consumeAmount: Number(row.consume_amount || 0),
-    manualCommission: Number(row.manual_commission || 0),
-    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    manualCommission: 0,
+    manualCommissionAmount: 0,
     durationMinutes: row.duration_minutes ?? '',
   }
 }
 
 export function toCashierOrderItem(item, orderId) {
   const quantity = Number(item.quantity || 1)
-  const manualCommission = Number(item.manualCommission || 0)
   return {
     order_id: orderId,
     project_id: item.projectId || null,
@@ -422,8 +406,8 @@ export function toCashierOrderItem(item, orderId) {
     discount_amount: Number(item.discountAmount || 0),
     actual_amount: Number(item.actualAmount || 0),
     consume_amount: Number(item.consumeAmount || 0),
-    manual_commission: manualCommission,
-    manual_commission_amount: Number(item.manualCommissionAmount ?? manualCommission * quantity),
+    manual_commission: 0,
+    manual_commission_amount: 0,
     duration_minutes: item.durationMinutes === '' || item.durationMinutes == null ? null : Number(item.durationMinutes),
   }
 }
@@ -450,7 +434,7 @@ export function cashierOrderToPerformanceRecord(order) {
     consultantId: order.consultantId,
     consultantName: order.consultantName,
     quantity: Number(order.quantity || 1),
-    manualCommissionAmount: Number(order.manualCommissionAmount || 0),
+    manualCommissionAmount: 0,
     remark: order.remark || '',
     status: order.status || 'active',
     createdAt: order.createdAt,

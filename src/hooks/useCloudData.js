@@ -60,13 +60,13 @@ function isValidRole(role) {
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
 const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
-const employeeSelectFields = 'id,name,phone,store,role,note,base_salary,social_security_allowance,full_attendance_bonus,seniority_salary,entry_date,is_active,is_technical_department,salary_plan_type,created_at,updated_at'
+const employeeSelectFields = 'id,name,phone,store,role,note,entry_date,is_active,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
-const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,manual_commission_amount,remark,created_at,updated_at'
-const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,manual_commission_amount,remark,status,created_at,updated_at'
-const cashierOrderItemSelectFields = 'id,order_id,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,manual_commission,manual_commission_amount,duration_minutes,created_at'
-const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
+const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,remark,created_at,updated_at'
+const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,remark,status,created_at,updated_at'
+const cashierOrderItemSelectFields = 'id,order_id,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,duration_minutes,created_at'
+const projectCommissionSelectFields = 'id,project_name,category,duration_minutes,unit,is_active,remark,created_at,updated_at'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
 const reviewSelectFields = 'id,date,store,invite_rate,appointment_rate,arrival_rate,deal_rate,deal_amount,unfinished_reason,tomorrow_action,created_at'
@@ -464,7 +464,7 @@ export function useCloudData(session) {
           projectName: orderItems.length > 1 ? orderItems.map((item) => item.projectName).filter(Boolean).join(' + ') : order.projectName,
           actualAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) : order.actualAmount,
           consumeAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : order.consumeAmount,
-          manualCommissionAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0) : order.manualCommissionAmount,
+          manualCommissionAmount: 0,
         }
       }))
       return true
