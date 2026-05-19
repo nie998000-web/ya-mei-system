@@ -87,6 +87,25 @@ function generateOrderNo(date = todayString()) {
   return `YM${day}${suffix}`
 }
 
+function cashierOrderItems(order) {
+  if (Array.isArray(order?.orderItems) && order.orderItems.length) return order.orderItems
+  if (!order?.projectName) return []
+  return [{
+    id: `legacy-${order.id || order.orderNo || 'new'}`,
+    projectId: order.projectId,
+    projectName: order.projectName,
+    projectCategory: order.projectCategory,
+    quantity: Number(order.quantity || 1),
+    originalAmount: Number(order.originalAmount || 0),
+    discountAmount: Number(order.discountAmount || 0),
+    actualAmount: Number(order.actualAmount || 0),
+    consumeAmount: Number(order.consumeAmount || 0),
+    manualCommission: Number(order.quantity || 1) > 0 ? Number(order.manualCommissionAmount || 0) / Number(order.quantity || 1) : Number(order.manualCommissionAmount || 0),
+    manualCommissionAmount: Number(order.manualCommissionAmount || 0),
+    durationMinutes: '',
+  }]
+}
+
 function normalizeActivationStatus(value) {
   const status = String(value || '').trim()
   if (status === '未联系') return '未跟进'
@@ -208,6 +227,7 @@ const emptyCashierOrder = {
   consultantName: '',
   manualCommission: 0,
   manualCommissionAmount: 0,
+  orderItems: [],
   remark: '',
   status: 'active',
 }
@@ -1423,7 +1443,8 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
     const monthMatch = !filters.month || String(item.month || item.date || '').startsWith(filters.month)
     const dateMatch = !filters.date || item.date === filters.date
     const customerMatch = !filters.customer || String(item.customerName || '').includes(filters.customer)
-    const projectMatch = !filters.project || String(item.projectName || '').includes(filters.project)
+    const projectNames = cashierOrderItems(item).map((orderItem) => orderItem.projectName).join(' ')
+    const projectMatch = !filters.project || String(item.projectName || projectNames || '').includes(filters.project) || projectNames.includes(filters.project)
     const serviceMatch = !filters.serviceEmployee || item.serviceEmployeeName === filters.serviceEmployee
     const salesMatch = !filters.salesEmployee || item.salesEmployeeName === filters.salesEmployee
     const paymentMatch = filters.paymentType === '全部方式' || item.paymentType === filters.paymentType
@@ -1489,8 +1510,8 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
                 <Td>{item.date}</Td>
                 <Td>{item.storeName}</Td>
                 <Td>{item.customerName}</Td>
-                <Td>{item.projectName}</Td>
-                <Td>{item.quantity}</Td>
+                <Td>{cashierOrderItems(item).map((orderItem) => orderItem.projectName).filter(Boolean).join(' + ') || item.projectName}</Td>
+                <Td>{cashierOrderItems(item).reduce((sum, orderItem) => sum + Number(orderItem.quantity || 0), 0) || item.quantity}</Td>
                 <Td>{item.serviceEmployeeName}</Td>
                 <Td>{item.salesEmployeeName}</Td>
                 <Td><Badge tone={item.status === 'voided' ? 'warning' : 'success'}>{item.status === 'voided' ? '已作废' : '正常'}</Badge></Td>
@@ -2703,45 +2724,98 @@ function FollowupDrawer({ data, customers, employees, stores, profile, lockedSto
 
 function CashierDrawer({ data, customers, employees, projects, stores, profile, lockedStore, lockedStoreValue, onClose, onSave }) {
   const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || normalizeStoreName(profile?.store) || data.storeName : data.storeName
+  const initialItems = cashierOrderItems(data)
   const [form, setForm] = useState({
     ...data,
     orderNo: data.orderNo || generateOrderNo(data.date || todayString()),
     storeName: fixedStore,
+    orderItems: initialItems.length ? initialItems : [{
+      id: `new-${Date.now()}`,
+      projectId: '',
+      projectName: '',
+      projectCategory: '',
+      quantity: 1,
+      originalAmount: 0,
+      discountAmount: 0,
+      actualAmount: 0,
+      consumeAmount: 0,
+      manualCommission: 0,
+      manualCommissionAmount: 0,
+      durationMinutes: '',
+    }],
   })
+  const [customerSearch, setCustomerSearch] = useState(data.customerName || data.customerPhone || '')
   const employeeOptions = employees
     .filter((item) => !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
     .map((item) => [item.id, `${item.name}（${roleLabel(item.role)}）`])
-  const project = projects.find((item) => String(item.id) === String(form.projectId))
-  const manualCommission = Number(form.manualCommission ?? project?.manualCommission ?? 0)
-  const quantity = Number(form.quantity || 1)
-  const manualTotal = manualCommission * quantity
-  const updateAmount = (patch) => {
-    const next = { ...form, ...patch }
-    const original = Number(next.originalAmount || 0)
-    const discount = Number(next.discountAmount || 0)
-    if (patch.originalAmount !== undefined || patch.discountAmount !== undefined) next.actualAmount = Math.max(original - discount, 0)
-    setForm(next)
-  }
-  const chooseCustomer = (value) => {
-    const customer = customers.find((item) => String(item.id) === String(value))
+  const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
+  const customerResults = customers
+    .filter((item) => {
+      if (!normalizedCustomerSearch) return true
+      return String(item.name || '').toLowerCase().includes(normalizedCustomerSearch)
+        || String(item.phone || '').includes(normalizedCustomerSearch)
+    })
+    .slice(0, 20)
+  const totals = form.orderItems.reduce((sum, item) => ({
+    originalAmount: sum.originalAmount + Number(item.originalAmount || 0),
+    discountAmount: sum.discountAmount + Number(item.discountAmount || 0),
+    actualAmount: sum.actualAmount + Number(item.actualAmount || 0),
+    consumeAmount: sum.consumeAmount + Number(item.consumeAmount || 0),
+    manualCommissionAmount: sum.manualCommissionAmount + Number(item.manualCommissionAmount || 0),
+  }), { originalAmount: 0, discountAmount: 0, actualAmount: 0, consumeAmount: 0, manualCommissionAmount: 0 })
+  const chooseCustomer = (customer) => {
     setForm({
       ...form,
-      customerId: value,
+      customerId: customer?.id || '',
       customerName: customer?.name || '',
       customerPhone: customer?.phone || '',
       storeName: customer?.store || form.storeName,
     })
+    setCustomerSearch(customer ? `${customer.name} ${customer.phone || ''}` : '')
   }
-  const chooseProject = (value) => {
+  const updateItem = (index, patch) => {
+    const orderItems = form.orderItems.map((item, itemIndex) => {
+      if (itemIndex !== index) return item
+      const next = { ...item, ...patch }
+      const original = Number(next.originalAmount || 0)
+      const discount = Number(next.discountAmount || 0)
+      if (patch.originalAmount !== undefined || patch.discountAmount !== undefined) next.actualAmount = Math.max(original - discount, 0)
+      next.manualCommissionAmount = Number(next.manualCommission || 0) * Number(next.quantity || 1)
+      return next
+    })
+    setForm({ ...form, orderItems })
+  }
+  const chooseProject = (index, value) => {
     const selected = projects.find((item) => String(item.id) === String(value))
-    setForm({
-      ...form,
+    updateItem(index, {
       projectId: value,
       projectName: selected?.projectName || '',
       projectCategory: selected?.category || '',
       manualCommission: Number(selected?.manualCommission || 0),
-      manualCommissionAmount: Number(selected?.manualCommission || 0) * quantity,
+      durationMinutes: selected?.durationMinutes ?? '',
     })
+  }
+  const addItem = () => {
+    setForm({
+      ...form,
+      orderItems: [...form.orderItems, {
+        id: `new-${Date.now()}`,
+        projectId: '',
+        projectName: '',
+        projectCategory: '',
+        quantity: 1,
+        originalAmount: 0,
+        discountAmount: 0,
+        actualAmount: 0,
+        consumeAmount: 0,
+        manualCommission: 0,
+        manualCommissionAmount: 0,
+        durationMinutes: '',
+      }],
+    })
+  }
+  const removeItem = (index) => {
+    setForm({ ...form, orderItems: form.orderItems.filter((_, itemIndex) => itemIndex !== index) })
   }
   const chooseEmployee = (fieldId, fieldName, value) => {
     const employee = employees.find((item) => String(item.id) === String(value))
@@ -2749,8 +2823,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   }
 
   return (
-    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={() => onSave({ ...form, manualCommission, manualCommissionAmount: manualTotal })}>
-      <FormGrid>
+    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={() => onSave({ ...form, ...totals })}>
+      <div className="mb-4 rounded-lg bg-pink-50/70 p-4">
+        <div className="mb-3 font-bold text-[#641631]">基础信息</div>
+        <FormGrid>
         <Field label="订单编号"><Input value={form.orderNo} onChange={(value) => setForm({ ...form, orderNo: value })} /></Field>
         <Field label="开单日期"><Input type="date" value={form.date} onChange={(value) => setForm({ ...form, date: value, orderNo: form.orderNo || generateOrderNo(value) })} /></Field>
         <Field label="门店">
@@ -2760,21 +2836,52 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
             <Select value={form.storeName} onChange={(value) => setForm({ ...form, storeName: value })} options={stores} />
           )}
         </Field>
-        <Field label="顾客"><Select value={form.customerId} onChange={chooseCustomer} options={customers.length ? [['', '请选择顾客'], ...customers.map((item) => [item.id, `${item.name} ${item.phone || ''}`])] : [['', '暂无顾客，请先新增顾客']]} /></Field>
+        <Field label="顾客搜索" full>
+          <Input value={customerSearch} onChange={(value) => {
+            setCustomerSearch(value)
+            if (!value) chooseCustomer(null)
+          }} placeholder="输入顾客姓名或手机号搜索" />
+          <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-pink-100 bg-white">
+            {customerResults.length === 0 && <div className="px-4 py-3 text-sm text-[#8a4964]">未找到顾客，可先去顾客管理新增</div>}
+            {customerResults.map((customer) => (
+              <button key={customer.id} type="button" onClick={() => chooseCustomer(customer)} className="block w-full border-b border-pink-50 px-4 py-3 text-left text-sm text-[#5f263c] hover:bg-pink-50">
+                {customer.name} · {customer.phone || '无手机号'} · {customer.store || '未设置门店'}
+              </button>
+            ))}
+          </div>
+        </Field>
         <Field label="顾客电话"><Input value={form.customerPhone} onChange={(value) => setForm({ ...form, customerPhone: value })} /></Field>
-        <Field label="项目"><Select value={form.projectId} onChange={chooseProject} options={projects.length ? [['', '请选择项目'], ...projects.map((item) => [item.id, `${item.projectName} · 手工费${money(item.manualCommission)}`])] : [['', '暂无项目，请先到项目提成设置添加']]} /></Field>
-        <Field label="项目分类"><Input value={form.projectCategory} onChange={(value) => setForm({ ...form, projectCategory: value })} /></Field>
-        <Field label="项目时长"><Input value={project?.durationMinutes || ''} onChange={() => {}} placeholder="选择项目后自动显示" /></Field>
-        <Field label="数量"><Input type="number" value={form.quantity} onChange={(value) => setForm({ ...form, quantity: value, manualCommissionAmount: manualCommission * Number(value || 1) })} /></Field>
-        <Field label="原价"><Input type="number" value={form.originalAmount} onChange={(value) => updateAmount({ originalAmount: value })} /></Field>
-        <Field label="优惠金额"><Input type="number" value={form.discountAmount} onChange={(value) => updateAmount({ discountAmount: value })} /></Field>
-        <Field label="实收金额"><Input type="number" value={form.actualAmount} onChange={(value) => setForm({ ...form, actualAmount: value })} /></Field>
-        <Field label="消耗金额"><Input type="number" value={form.consumeAmount} onChange={(value) => setForm({ ...form, consumeAmount: value })} /></Field>
+        </FormGrid>
+      </div>
+      <div className="mb-4 rounded-lg bg-white p-4 ring-1 ring-pink-100">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="font-bold text-[#641631]">项目明细</div>
+          <PrimaryButton onClick={addItem}>添加项目</PrimaryButton>
+        </div>
+        <div className="space-y-3">
+          {form.orderItems.map((item, index) => (
+            <div key={item.id || index} className="grid grid-cols-1 gap-3 rounded-lg bg-pink-50/60 p-3 md:grid-cols-9">
+              <Field label="项目" full><Select value={item.projectId} onChange={(value) => chooseProject(index, value)} options={projects.length ? [['', '请选择项目'], ...projects.map((project) => [project.id, `${project.projectName} · 手工费${money(project.manualCommission)}`])] : [['', '暂无项目，请先到项目提成设置添加']]} /></Field>
+              <Field label="数量"><Input type="number" value={item.quantity} onChange={(value) => updateItem(index, { quantity: value })} /></Field>
+              <Field label="原价"><Input type="number" value={item.originalAmount} onChange={(value) => updateItem(index, { originalAmount: value })} /></Field>
+              <Field label="优惠"><Input type="number" value={item.discountAmount} onChange={(value) => updateItem(index, { discountAmount: value })} /></Field>
+              <Field label="实收"><Input type="number" value={item.actualAmount} onChange={(value) => updateItem(index, { actualAmount: value })} /></Field>
+              <Field label="消耗"><Input type="number" value={item.consumeAmount} onChange={(value) => updateItem(index, { consumeAmount: value })} /></Field>
+              <Field label="手工费"><Input value={money(item.manualCommissionAmount)} onChange={() => {}} /></Field>
+              <Field label="时长"><Input value={item.durationMinutes || ''} onChange={() => {}} /></Field>
+              <div className="flex items-end"><ActionButton tone="danger" onClick={() => removeItem(index)}>删除</ActionButton></div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <FormGrid>
+        <Field label="订单总实收"><Input value={money(totals.actualAmount)} onChange={() => {}} /></Field>
+        <Field label="订单总消耗"><Input value={money(totals.consumeAmount)} onChange={() => {}} /></Field>
+        <Field label="订单总手工费"><Input value={money(totals.manualCommissionAmount)} onChange={() => {}} /></Field>
         <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
         <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={employeeOptions.length ? [['', '请选择操作老师'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
         <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={employeeOptions.length ? [['', '请选择开单人'], ...employeeOptions] : [['', '暂无员工，请先到员工管理添加']]} /></Field>
         <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...employeeOptions]} /></Field>
-        <Field label="手工费"><Input value={money(manualTotal)} onChange={() => {}} /></Field>
         <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
       </FormGrid>
     </Drawer>
@@ -2782,13 +2889,14 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
 }
 
 function CashierDetail({ order, onClose }) {
+  const items = cashierOrderItems(order)
   const rows = [
     ['订单编号', order.orderNo],
     ['日期', order.date],
     ['门店', order.storeName],
     ['顾客', `${order.customerName || ''} ${order.customerPhone || ''}`],
-    ['项目', order.projectName],
-    ['数量', order.quantity],
+    ['项目', items.map((item) => item.projectName).join(' + ') || order.projectName],
+    ['数量', items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || order.quantity],
     ['原价', money(order.originalAmount)],
     ['优惠金额', money(order.discountAmount)],
     ['实收金额', money(order.actualAmount)],
@@ -2812,6 +2920,20 @@ function CashierDetail({ order, onClose }) {
             <div key={label} className="grid grid-cols-[130px_1fr] border-b border-pink-100 py-3 last:border-b-0">
               <div className="font-semibold text-[#79445b]">{label}</div>
               <div className="text-[#5f263c]">{value || '-'}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 rounded-lg border border-pink-100 bg-white p-4">
+          <div className="mb-3 font-bold text-[#641631]">项目明细</div>
+          {items.length === 0 && <div className="text-sm text-[#8a4964]">暂无项目明细</div>}
+          {items.map((item, index) => (
+            <div key={item.id || index} className="grid grid-cols-2 gap-2 border-b border-pink-50 py-3 text-sm last:border-b-0 md:grid-cols-6">
+              <div className="font-semibold text-[#5f263c]">{item.projectName || '-'}</div>
+              <div>数量：{item.quantity}</div>
+              <div>实收：{money(item.actualAmount)}</div>
+              <div>消耗：{money(item.consumeAmount)}</div>
+              <div>手工：{money(item.manualCommissionAmount)}</div>
+              <div>时长：{item.durationMinutes || '-'}</div>
             </div>
           ))}
         </div>

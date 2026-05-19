@@ -6,6 +6,7 @@ import {
 import {
   fromCustomer,
   fromCashierOrder,
+  fromCashierOrderItem,
   fromEmployee,
   fromFollowup,
   fromPerformanceReport,
@@ -16,6 +17,7 @@ import {
   normalizeStoreName,
   toEmployee,
   toCashierOrder,
+  toCashierOrderItem,
   toFollowup,
   toPerformanceReport,
   toProjectCommission,
@@ -63,6 +65,7 @@ const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,s
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
 const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,manual_commission_amount,remark,created_at,updated_at'
 const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,manual_commission_amount,remark,status,created_at,updated_at'
+const cashierOrderItemSelectFields = 'id,order_id,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,manual_commission,manual_commission_amount,duration_minutes,created_at'
 const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
@@ -435,7 +438,35 @@ export function useCloudData(session) {
         return false
       }
 
-      setCashierOrders((data || []).map(fromCashierOrder))
+      const mappedOrders = (data || []).map(fromCashierOrder)
+      const orderIds = mappedOrders.map((item) => item.id).filter(Boolean)
+      let itemsByOrderId = new Map()
+      if (orderIds.length > 0) {
+        const { data: itemRows, error: itemsError } = await supabase
+          .from('cashier_order_items')
+          .select(cashierOrderItemSelectFields)
+          .in('order_id', orderIds)
+        if (itemsError) {
+          console.error('cashier_order_items 查询失败:', itemsError)
+        } else {
+          itemsByOrderId = (itemRows || []).map(fromCashierOrderItem).reduce((map, item) => {
+            const key = String(item.orderId)
+            map.set(key, [...(map.get(key) || []), item])
+            return map
+          }, new Map())
+        }
+      }
+      setCashierOrders(mappedOrders.map((order) => {
+        const orderItems = itemsByOrderId.get(String(order.id)) || order.orderItems || []
+        return {
+          ...order,
+          orderItems,
+          projectName: orderItems.length > 1 ? orderItems.map((item) => item.projectName).filter(Boolean).join(' + ') : order.projectName,
+          actualAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) : order.actualAmount,
+          consumeAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : order.consumeAmount,
+          manualCommissionAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0) : order.manualCommissionAmount,
+        }
+      }))
       return true
     } catch (ordersError) {
       const message = errorMessage(ordersError)
@@ -827,6 +858,18 @@ export function useCloudData(session) {
       : supabase.from('cashier_orders').insert(payload).select(cashierOrderSelectFields).single()
     const { data, error: saveError } = await request
     if (saveError) throw new Error(errorMessage(saveError))
+    const orderItems = Array.isArray(row.orderItems) && row.orderItems.length ? row.orderItems : []
+    if (data?.id && orderItems.length > 0) {
+      const { error: deleteItemsError } = await supabase
+        .from('cashier_order_items')
+        .delete()
+        .eq('order_id', data.id)
+      if (deleteItemsError) throw new Error(errorMessage(deleteItemsError))
+      const { error: insertItemsError } = await supabase
+        .from('cashier_order_items')
+        .insert(orderItems.map((item) => toCashierOrderItem(item, data.id)))
+      if (insertItemsError) throw new Error(errorMessage(insertItemsError))
+    }
     if (data) {
       const mapped = fromCashierOrder(data)
       setCashierOrders((list) => (row.id ? list.map((item) => (item.id === row.id ? mapped : item)) : [mapped, ...list]))

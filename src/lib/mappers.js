@@ -295,6 +295,21 @@ export function fromPerformanceRecord(row) {
 
 export function fromCashierOrder(row) {
   const storeName = normalizeStoreName(row.store_name || row.store)
+  const fallbackItem = {
+    id: `legacy-${row.id}`,
+    orderId: row.id,
+    projectId: row.project_id,
+    projectName: row.project_name || '',
+    projectCategory: row.project_category || '',
+    quantity: Number(row.quantity || 1),
+    originalAmount: Number(row.original_amount || 0),
+    discountAmount: Number(row.discount_amount || 0),
+    actualAmount: Number(row.actual_amount || 0),
+    consumeAmount: Number(row.consume_amount || 0),
+    manualCommission: Number(row.quantity || 1) > 0 ? Number(row.manual_commission_amount || 0) / Number(row.quantity || 1) : Number(row.manual_commission_amount || 0),
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    durationMinutes: '',
+  }
   return {
     id: row.id,
     orderNo: row.order_no || '',
@@ -325,6 +340,7 @@ export function fromCashierOrder(row) {
     manualCommissionAmount: Number(row.manual_commission_amount || 0),
     remark: row.remark || '',
     status: row.status || 'active',
+    orderItems: row.orderItems?.length ? row.orderItems : (row.project_name ? [fallbackItem] : []),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -332,13 +348,18 @@ export function fromCashierOrder(row) {
 
 export function toCashierOrder(row, profile) {
   const date = row.date || new Date().toISOString().slice(0, 10)
-  const quantity = Number(row.quantity || 1)
-  const manualCommission = Number(row.manualCommission || 0)
-  const originalAmount = Number(row.originalAmount || 0)
-  const discountAmount = Number(row.discountAmount || 0)
-  const actualAmount = row.actualAmount === '' || row.actualAmount == null
-    ? Math.max(originalAmount - discountAmount, 0)
-    : Number(row.actualAmount || 0)
+  const items = Array.isArray(row.orderItems) && row.orderItems.length ? row.orderItems : []
+  const firstItem = items[0] || row
+  const quantity = items.length ? items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) : Number(row.quantity || 1)
+  const originalAmount = items.length ? items.reduce((sum, item) => sum + Number(item.originalAmount || 0), 0) : Number(row.originalAmount || 0)
+  const discountAmount = items.length ? items.reduce((sum, item) => sum + Number(item.discountAmount || 0), 0) : Number(row.discountAmount || 0)
+  const actualAmount = items.length
+    ? items.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0)
+    : row.actualAmount === '' || row.actualAmount == null
+      ? Math.max(originalAmount - discountAmount, 0)
+      : Number(row.actualAmount || 0)
+  const consumeAmount = items.length ? items.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : Number(row.consumeAmount || 0)
+  const manualCommissionAmount = items.length ? items.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0) : Number(row.manualCommission || 0) * quantity
   return {
     order_no: row.orderNo || '',
     date,
@@ -348,14 +369,14 @@ export function toCashierOrder(row, profile) {
     customer_id: row.customerId || null,
     customer_name: row.customerName || '',
     customer_phone: row.customerPhone || '',
-    project_id: row.projectId || null,
-    project_name: row.projectName || '',
-    project_category: row.projectCategory || '',
+    project_id: firstItem.projectId || null,
+    project_name: items.length > 1 ? items.map((item) => item.projectName).filter(Boolean).join(' + ') : firstItem.projectName || '',
+    project_category: firstItem.projectCategory || '',
     quantity,
     original_amount: originalAmount,
     discount_amount: discountAmount,
     actual_amount: actualAmount,
-    consume_amount: Number(row.consumeAmount || 0),
+    consume_amount: consumeAmount,
     payment_type: row.paymentType || 'cash',
     service_employee_id: row.serviceEmployeeId || null,
     service_employee_name: row.serviceEmployeeName || '',
@@ -363,10 +384,47 @@ export function toCashierOrder(row, profile) {
     sales_employee_name: row.salesEmployeeName || '',
     consultant_id: row.consultantId || null,
     consultant_name: row.consultantName || '',
-    manual_commission_amount: manualCommission * quantity,
+    manual_commission_amount: manualCommissionAmount,
     remark: row.remark || '',
     status: row.status || 'active',
     updated_at: new Date().toISOString(),
+  }
+}
+
+export function fromCashierOrderItem(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    projectId: row.project_id,
+    projectName: row.project_name || '',
+    projectCategory: row.project_category || '',
+    quantity: Number(row.quantity || 1),
+    originalAmount: Number(row.original_amount || 0),
+    discountAmount: Number(row.discount_amount || 0),
+    actualAmount: Number(row.actual_amount || 0),
+    consumeAmount: Number(row.consume_amount || 0),
+    manualCommission: Number(row.manual_commission || 0),
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    durationMinutes: row.duration_minutes ?? '',
+  }
+}
+
+export function toCashierOrderItem(item, orderId) {
+  const quantity = Number(item.quantity || 1)
+  const manualCommission = Number(item.manualCommission || 0)
+  return {
+    order_id: orderId,
+    project_id: item.projectId || null,
+    project_name: item.projectName || '',
+    project_category: item.projectCategory || '',
+    quantity,
+    original_amount: Number(item.originalAmount || 0),
+    discount_amount: Number(item.discountAmount || 0),
+    actual_amount: Number(item.actualAmount || 0),
+    consume_amount: Number(item.consumeAmount || 0),
+    manual_commission: manualCommission,
+    manual_commission_amount: Number(item.manualCommissionAmount ?? manualCommission * quantity),
+    duration_minutes: item.durationMinutes === '' || item.durationMinutes == null ? null : Number(item.durationMinutes),
   }
 }
 
