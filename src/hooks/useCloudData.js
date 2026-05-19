@@ -19,7 +19,6 @@ import {
   toCashierOrder,
   toCashierOrderItem,
   toFollowup,
-  toPerformanceReport,
   toProjectCommission,
   toReview,
   toStoreTarget,
@@ -819,30 +818,6 @@ export function useCloudData(session) {
     await loadAll()
   }
 
-  const savePerformanceReport = async (row) => {
-    const payload = {
-      ...toPerformanceReport(row, profile),
-      store: writeStoreForProfile(row.store, profile),
-      employee: isBeauticianRole(profile?.role) ? profile.name : row.employee,
-    }
-    const request = row.id
-      ? supabase.from('employee_performance_reports').update(payload).eq('id', row.id).select(performanceReportSelectFields).single()
-      : supabase.from('employee_performance_reports').insert(payload).select(performanceReportSelectFields).single()
-    const { data, error: saveError } = await request
-    if (saveError) throw new Error(errorMessage(saveError))
-    if (data) {
-      const mapped = fromPerformanceReport(data)
-      setPerformanceReports((list) => (row.id ? list.map((item) => (item.id === row.id ? mapped : item)) : [mapped, ...list]))
-    }
-    await loadPerformanceReports(profile)
-  }
-
-  const deletePerformanceReport = async (id) => {
-    const { error: deleteError } = await supabase.from('employee_performance_reports').delete().eq('id', id)
-    if (deleteError) throw new Error(errorMessage(deleteError))
-    await loadPerformanceReports(profile)
-  }
-
   const saveCashierOrder = async (row) => {
     const payload = {
       ...toCashierOrder(row, profile),
@@ -1025,8 +1000,6 @@ export function useCloudData(session) {
     deleteFollowup,
     saveReview,
     deleteReview,
-    savePerformanceReport,
-    deletePerformanceReport,
     saveCashierOrder,
     voidCashierOrder,
     saveStoreTarget,

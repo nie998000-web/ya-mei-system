@@ -298,19 +298,6 @@ const emptyEmployee = {
   note: '',
 }
 
-const emptyPerformanceReport = {
-  date: todayString(),
-  store: defaultStores[0],
-  employee: '',
-  arrivals: 0,
-  serviceSales: 0,
-  consumeSales: 0,
-  cashSales: 0,
-  newCustomers: 0,
-  repeatCustomers: 0,
-  upsellAmount: 0,
-}
-
 function App() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -366,7 +353,6 @@ function App() {
   const scopedFollowups = filterRecordsByUserPermission(cloud.followups, currentUser)
   const scopedReviews = filterRecordsByUserPermission(cloud.reviews, currentUser)
   const scopedPerformanceReports = filterRecordsByUserPermission(cloud.performanceReports, currentUser)
-  const scopedPerformanceRecords = filterRecordsByUserPermission(cloud.performanceRecords, currentUser)
   const scopedCashierOrders = filterRecordsByUserPermission(cloud.cashierOrders, currentUser)
   const scopedStoreTargets = filterRecordsByUserPermission(cloud.storeTargets, currentUser)
   const visibleNavItems = navItems.filter(([key]) => canViewMenu(currentUser, key, menuPermissions))
@@ -379,7 +365,6 @@ function App() {
     followups: scopedFollowups,
     reviews: scopedReviews,
     performanceReports: scopedPerformanceReports,
-    performanceRecords: scopedPerformanceRecords,
     cashierOrders: scopedCashierOrders,
     projectCommissions: cloud.projectCommissions,
     storeTargets: scopedStoreTargets,
@@ -392,7 +377,6 @@ function App() {
     employeeError: cloud.employeeError,
     dailyReviewError: cloud.dailyReviewError,
 	    performanceReportError: cloud.performanceReportError,
-	    performanceRecordError: cloud.performanceRecordError,
     cashierOrderError: cloud.cashierOrderError,
 	    projectCommissionError: cloud.projectCommissionError,
 	    storeTargetError: cloud.storeTargetError,
@@ -404,10 +388,8 @@ function App() {
     deleteFollowup: cloud.deleteFollowup,
     saveReview: cloud.saveReview,
     deleteReview: cloud.deleteReview,
-	    savePerformanceReport: cloud.savePerformanceReport,
     saveCashierOrder: cloud.saveCashierOrder,
     voidCashierOrder: cloud.voidCashierOrder,
-	    deletePerformanceReport: cloud.deletePerformanceReport,
 	    saveStoreTarget: cloud.saveStoreTarget,
 	    saveProjectCommission: cloud.saveProjectCommission,
 	    saveEmployee: cloud.saveEmployee,
@@ -1788,134 +1770,83 @@ function EmployeesModule({ employees, stores, role, profile, employeeError, save
   )
 }
 
-function cashierOrdersToDailyReports(cashierOrders) {
-  const activeOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((item) => item.status !== 'voided')
-  const grouped = activeOrders.reduce((map, order) => {
-    const employee = order.salesEmployeeName || order.serviceEmployeeName || '未设置员工'
-    const date = order.date || todayString()
-    const store = normalizeStoreName(order.storeName || order.store) || defaultStores[0]
-    const key = `${date}-${store}-${employee}`
-    map[key] = map[key] || {
-      id: `cashier-${key}`,
-      source: 'cashier',
-      date,
-      store,
-      employee,
-      arrivals: 0,
-      serviceSales: 0,
-      consumeSales: 0,
-      cashSales: 0,
-      newCustomers: 0,
-      repeatCustomers: 0,
-      upsellAmount: 0,
-      totalSales: 0,
-      unitPrice: 0,
-    }
-    map[key].arrivals += 1
-    map[key].serviceSales += Number(order.actualAmount || 0)
-    map[key].consumeSales += Number(order.consumeAmount || 0)
-    if (!['card', 'package'].includes(order.paymentType)) map[key].cashSales += Number(order.actualAmount || 0)
-    map[key].totalSales += Number(order.actualAmount || 0)
-    map[key].unitPrice = map[key].arrivals > 0 ? map[key].totalSales / map[key].arrivals : 0
-    return map
-  }, {})
-  return Object.values(grouped)
-}
-
-function PerformanceReportsModule({ performanceReports, cashierOrders, employees, stores, role, profile, performanceReportError, cashierOrderError, savePerformanceReport, deletePerformanceReport }) {
+function PerformanceReportsModule({ cashierOrders, customers, stores, role, profile, cashierOrderError }) {
   const canChooseStore = isBossRole(role)
   const isBeautician = isBeauticianRole(role)
-  const canEditReports = isBossRole(role) || String(role || '').trim() === 'manager' || isBeautician
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
-  const [editing, setEditing] = useState(null)
-  const [toast, setToast] = useState('')
-  const [error, setError] = useState('')
   const [filters, setFilters] = useState({
-    date: todayString(),
     store: canChooseStore ? '全部门店' : fixedStore,
     employee: isBeautician ? profile?.name || '' : '全部员工',
   })
 
   const storeOptions = canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]
-  const scopedEmployees = employees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
-  const employeeOptions = isBeautician ? [profile?.name || ''] : ['全部员工', ...unique(scopedEmployees.map((item) => item.name).filter(Boolean))]
-  const reportSource = (Array.isArray(cashierOrders) && cashierOrders.some((item) => item.status !== 'voided'))
-    ? cashierOrdersToDailyReports(cashierOrders)
-    : performanceReports
-  const filteredReports = reportSource.filter((item) => {
-    const dateMatch = !filters.date || item.date === filters.date
-    const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store
-    const employeeMatch = filters.employee === '全部员工' || item.employee === filters.employee
-    return dateMatch && storeMatch && employeeMatch
+  const today = todayString()
+  const customerMap = new Map((Array.isArray(customers) ? customers : []).map((customer) => [String(customer.id), customer]))
+  const todayOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((order) => {
+    const store = normalizeStoreName(order.storeName || order.store)
+    const employee = order.salesEmployeeName || order.serviceEmployeeName || ''
+    const storeMatch = filters.store === '全部门店' || store === filters.store
+    const employeeMatch = filters.employee === '全部员工' || employee === filters.employee
+    return order.status !== 'voided' && order.date === today && storeMatch && employeeMatch
   })
-  const todayReports = reportSource.filter((item) => item.date === todayString() && (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.employee === profile?.name))
-  const totalSales = todayReports.reduce((sum, item) => sum + Number(item.totalSales || 0), 0)
-  const totalArrivals = todayReports.reduce((sum, item) => sum + Number(item.arrivals || 0), 0)
-  const totalNewCustomers = todayReports.reduce((sum, item) => sum + Number(item.newCustomers || 0), 0)
+  const employeeOptions = isBeautician
+    ? [profile?.name || '']
+    : ['全部员工', ...unique(todayOrders.map((order) => order.salesEmployeeName || order.serviceEmployeeName).filter(Boolean))]
+  const customerKeyOf = (order) => String(order.customerId || order.customerPhone || order.customerName || order.id)
+  const arrivedCustomerKeys = new Set(todayOrders.map(customerKeyOf).filter(Boolean))
+  const totalSales = todayOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0)
+  const totalArrivals = arrivedCustomerKeys.size
+  const newCustomerKeys = new Set(todayOrders
+    .filter((order) => {
+      const customer = customerMap.get(String(order.customerId))
+      return Boolean(customer?.isNewCustomer || customer?.is_new_customer)
+    })
+    .map(customerKeyOf)
+    .filter(Boolean))
+  const totalNewCustomers = newCustomerKeys.size
   const averageOrder = totalArrivals > 0 ? totalSales / totalArrivals : 0
-  const employeeRank = filteredReports
-    .map((item) => ({ ...item }))
-    .sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
-  const todayEmployeeRank = todayReports
-    .map((item) => ({ name: item.employee, store: item.store, totalSales: item.totalSales, arrivals: item.arrivals }))
+  const employeeRank = Object.values(todayOrders.reduce((map, order) => {
+    const name = order.salesEmployeeName || order.serviceEmployeeName || '未设置员工'
+    const key = `${normalizeStoreName(order.storeName || order.store)}-${name}`
+    map[key] = map[key] || {
+      employee: name,
+      store: normalizeStoreName(order.storeName || order.store),
+      totalSales: 0,
+      consumeSales: 0,
+      cashSales: 0,
+      customerKeys: new Set(),
+      orders: 0,
+    }
+    map[key].totalSales += Number(order.actualAmount || 0)
+    map[key].consumeSales += Number(order.consumeAmount || 0)
+    if (!['card', 'package'].includes(order.paymentType)) map[key].cashSales += Number(order.actualAmount || 0)
+    map[key].customerKeys.add(customerKeyOf(order))
+    map[key].orders += 1
+    return map
+  }, {})).map((item) => ({
+    ...item,
+    arrivals: item.customerKeys.size,
+    unitPrice: item.customerKeys.size > 0 ? item.totalSales / item.customerKeys.size : 0,
+  }))
     .sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
   const storeRank = validStoreNames
     .map((store) => {
-      const list = todayReports.filter((item) => normalizeStoreName(item.store) === store)
+      const list = todayOrders.filter((order) => normalizeStoreName(order.storeName || order.store) === store)
+      const storeCustomerKeys = new Set(list.map(customerKeyOf).filter(Boolean))
       return {
         store,
-        totalSales: list.reduce((sum, item) => sum + Number(item.totalSales || 0), 0),
-        arrivals: list.reduce((sum, item) => sum + Number(item.arrivals || 0), 0),
+        totalSales: list.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0),
+        arrivals: storeCustomerKeys.size,
+        orders: list.length,
       }
     })
     .filter((item) => canChooseStore || item.store === fixedStore)
     .sort((a, b) => Number(b.totalSales || 0) - Number(a.totalSales || 0))
 
-  const showToast = (message) => {
-    setToast(message)
-    window.setTimeout(() => setToast(''), 2200)
-  }
-
-  const save = async (data) => {
-    setError('')
-    try {
-      const payload = {
-        ...data,
-        store: canChooseStore ? data.store : fixedStore,
-        employee: isBeautician ? profile?.name || '' : data.employee,
-      }
-      await savePerformanceReport(payload)
-      setEditing(null)
-      showToast('保存成功')
-    } catch (saveError) {
-      setError(saveError.message || '保存失败')
-    }
-  }
-
-  const remove = async (item) => {
-    if (!window.confirm('确认删除这条员工业绩日报吗？')) return
-    setError('')
-    try {
-      await deletePerformanceReport(item.id)
-      showToast('删除成功')
-    } catch (deleteError) {
-      setError(deleteError.message || '删除失败')
-    }
-  }
-
-  const openCreate = () => {
-    setEditing({
-      ...emptyPerformanceReport,
-      store: fixedStore || stores[0] || defaultStores[0],
-      employee: isBeautician ? profile?.name || '' : '',
-    })
-  }
-
   return (
     <div className="space-y-5">
-      <Panel title="员工业绩日报" subtitle="记录每天员工到店、消耗、现金、升单和总业绩" action={canEditReports ? <PrimaryButton onClick={openCreate}>新增日报</PrimaryButton> : null}>
-        {toast && <Toast>{toast}</Toast>}
-        {(error || performanceReportError || cashierOrderError) && <ErrorNotice>{error || performanceReportError || cashierOrderError}</ErrorNotice>}
+      <Panel title="员工业绩日报" subtitle="自动读取今日开单收银数据，不再人工录入">
+        {cashierOrderError && <ErrorNotice>{cashierOrderError}</ErrorNotice>}
         <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="rounded-lg bg-[#c2185b] p-4 text-white shadow-md shadow-pink-100">
             <div className="text-sm text-pink-100">今日总业绩</div>
@@ -1934,47 +1865,33 @@ function PerformanceReportsModule({ performanceReports, cashierOrders, employees
             <div className="mt-2 text-3xl font-black text-[#bd1657]">{money(averageOrder)}</div>
           </div>
         </div>
-        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-3">
-          <Field label="日期筛选"><Input type="date" value={filters.date} onChange={(value) => setFilters({ ...filters, date: value })} /></Field>
+        <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
           <Field label="门店筛选"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value, employee: isBeautician ? profile?.name || '' : '全部员工' })} options={storeOptions} disabled={!canChooseStore} /></Field>
           <Field label="员工筛选"><Select value={filters.employee} onChange={(value) => setFilters({ ...filters, employee: value })} options={employeeOptions} disabled={isBeautician} /></Field>
         </div>
         <Table>
           <thead>
             <tr>
-              {['排名', '日期', '门店', '员工', '到店人数', '消耗金额', '现金金额', '新客人数', '老客复购', '升单金额', '总业绩', '客单价', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+              {['排名', '门店', '员工', '到店人数', '订单数', '消耗金额', '现金金额', '总业绩', '客单价'].map((head) => <Th key={head}>{head}</Th>)}
             </tr>
           </thead>
           <tbody>
             {employeeRank.length === 0 && (
               <tr className="border-t border-pink-50">
-                <Td colSpan={13}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无员工业绩日报</div></Td>
+                <Td colSpan={9}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">今日暂无开单数据</div></Td>
               </tr>
             )}
             {employeeRank.map((item, index) => (
-              <tr key={item.id} className="border-t border-pink-50">
+              <tr key={`${item.store}-${item.employee}`} className="border-t border-pink-50">
                 <Td><Badge tone={index === 0 ? 'danger' : 'pink'}>第{index + 1}名</Badge></Td>
-                <Td>{item.date}</Td>
                 <Td>{item.store}</Td>
                 <Td><div className="font-semibold text-[#5f263c]">{item.employee}</div></Td>
                 <Td>{item.arrivals}</Td>
+                <Td>{item.orders}</Td>
                 <Td>{money(item.consumeSales)}</Td>
                 <Td>{money(item.cashSales)}</Td>
-                <Td>{item.newCustomers}</Td>
-                <Td>{item.repeatCustomers}</Td>
-                <Td>{money(item.upsellAmount)}</Td>
                 <Td><b className="text-[#bd1657]">{money(item.totalSales)}</b></Td>
                 <Td>{money(item.unitPrice)}</Td>
-                <Td>
-                  {item.source === 'cashier' ? (
-                    <Badge tone="success">来自开单</Badge>
-                  ) : canEditReports ? (
-                    <>
-                      <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
-                      <ActionButton tone="danger" onClick={() => remove(item)}>删除</ActionButton>
-                    </>
-                  ) : ''}
-                </Td>
               </tr>
             ))}
           </tbody>
@@ -1983,26 +1900,12 @@ function PerformanceReportsModule({ performanceReports, cashierOrders, employees
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         <Panel title="今日员工业绩排行" subtitle="按今日总业绩从高到低">
-          <RankList rows={todayEmployeeRank.map((item) => ({ name: `${item.name} · ${item.store}`, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `${item.arrivals}人到店` }))} />
+          <RankList rows={employeeRank.map((item) => ({ name: `${item.employee} · ${item.store}`, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `${item.arrivals}人到店 · ${item.orders}单` }))} />
         </Panel>
         <Panel title="今日门店排行" subtitle="按今日总业绩从高到低">
           <RankList rows={storeRank.map((item) => ({ name: item.store, value: money(item.totalSales), amount: Number(item.totalSales || 0), sub: `${item.arrivals}人到店` }))} />
         </Panel>
       </div>
-
-      {editing && (
-        <PerformanceReportDrawer
-          data={editing}
-          employees={employees}
-          stores={stores}
-          profile={profile}
-          lockedStore={!canChooseStore}
-          lockedStoreValue={fixedStore}
-          lockedEmployee={isBeautician}
-          onClose={() => setEditing(null)}
-          onSave={save}
-        />
-      )}
     </div>
   )
 }
@@ -2850,47 +2753,6 @@ function EmployeeDrawer({ data, stores, lockedStore, lockedStoreValue, onClose, 
         <Field label="今日成交数"><Input type="number" value={form.today_deals ?? 0} onChange={(value) => setForm({ ...form, today_deals: value })} /></Field>
         <Field label="今日销售额"><Input type="number" value={form.today_sales ?? 0} onChange={(value) => setForm({ ...form, today_sales: value })} /></Field>
         <Field label="备注" full><Textarea value={form.note} onChange={(value) => setForm({ ...form, note: value })} /></Field>
-      </FormGrid>
-    </Drawer>
-  )
-}
-
-function PerformanceReportDrawer({ data, employees, stores, profile, lockedStore, lockedStoreValue, lockedEmployee, onClose, onSave }) {
-  const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || data.store : data.store
-  const fixedEmployee = lockedEmployee ? profile?.name || data.employee : data.employee
-  const [form, setForm] = useState({ ...data, store: fixedStore, employee: fixedEmployee })
-  const employeeOptions = unique(
-    employees
-      .filter((item) => !form.store || normalizeStoreName(item.store) === normalizeStoreName(form.store))
-      .map((item) => item.name)
-      .filter(Boolean),
-  )
-
-  return (
-    <Drawer title={form.id ? '编辑员工业绩日报' : '新增员工业绩日报'} onClose={onClose} onSave={() => onSave(form)}>
-      <FormGrid>
-        <Field label="日期"><Input type="date" value={form.date} onChange={(value) => setForm({ ...form, date: value })} /></Field>
-        <Field label="门店">
-          {lockedStore ? (
-            <LockedStoreDisplay value={fixedStore} />
-          ) : (
-            <Select value={form.store} onChange={(value) => setForm({ ...form, store: value, employee: '' })} options={stores} />
-          )}
-        </Field>
-        <Field label="员工">
-          {lockedEmployee ? (
-            <LockedStoreDisplay value={fixedEmployee} />
-          ) : (
-            <Select value={form.employee} onChange={(value) => setForm({ ...form, employee: value })} options={['', ...employeeOptions]} />
-          )}
-        </Field>
-        <Field label="到店人数"><Input type="number" value={form.arrivals} onChange={(value) => setForm({ ...form, arrivals: value })} /></Field>
-        <Field label="总业绩"><Input type="number" value={form.serviceSales} onChange={(value) => setForm({ ...form, serviceSales: value })} /></Field>
-        <Field label="消耗业绩"><Input type="number" value={form.consumeSales} onChange={(value) => setForm({ ...form, consumeSales: value })} /></Field>
-        <Field label="现金业绩"><Input type="number" value={form.cashSales} onChange={(value) => setForm({ ...form, cashSales: value })} /></Field>
-        <Field label="新客人数"><Input type="number" value={form.newCustomers} onChange={(value) => setForm({ ...form, newCustomers: value })} /></Field>
-        <Field label="老客复购人数"><Input type="number" value={form.repeatCustomers} onChange={(value) => setForm({ ...form, repeatCustomers: value })} /></Field>
-        <Field label="升单金额"><Input type="number" value={form.upsellAmount} onChange={(value) => setForm({ ...form, upsellAmount: value })} /></Field>
       </FormGrid>
     </Drawer>
   )
