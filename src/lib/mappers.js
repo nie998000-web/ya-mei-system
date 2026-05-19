@@ -292,3 +292,110 @@ export function fromPerformanceRecord(row) {
     updatedAt: row.updated_at,
   }
 }
+
+export function fromCashierOrder(row) {
+  const storeName = normalizeStoreName(row.store_name || row.store)
+  return {
+    id: row.id,
+    orderNo: row.order_no || '',
+    date: row.date || '',
+    month: row.month || String(row.date || '').slice(0, 7),
+    storeId: row.store_id,
+    storeName,
+    store: storeName,
+    customerId: row.customer_id,
+    customerName: row.customer_name || '',
+    customerPhone: row.customer_phone || '',
+    projectId: row.project_id,
+    projectName: row.project_name || '',
+    projectCategory: row.project_category || '',
+    quantity: Number(row.quantity || 1),
+    originalAmount: Number(row.original_amount || 0),
+    discountAmount: Number(row.discount_amount || 0),
+    actualAmount: Number(row.actual_amount || 0),
+    amount: Number(row.actual_amount || 0),
+    consumeAmount: Number(row.consume_amount || 0),
+    paymentType: row.payment_type || 'cash',
+    serviceEmployeeId: row.service_employee_id,
+    serviceEmployeeName: row.service_employee_name || '',
+    salesEmployeeId: row.sales_employee_id,
+    salesEmployeeName: row.sales_employee_name || '',
+    consultantId: row.consultant_id,
+    consultantName: row.consultant_name || '',
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
+    remark: row.remark || '',
+    status: row.status || 'active',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export function toCashierOrder(row, profile) {
+  const date = row.date || new Date().toISOString().slice(0, 10)
+  const quantity = Number(row.quantity || 1)
+  const manualCommission = Number(row.manualCommission || 0)
+  const originalAmount = Number(row.originalAmount || 0)
+  const discountAmount = Number(row.discountAmount || 0)
+  const actualAmount = row.actualAmount === '' || row.actualAmount == null
+    ? Math.max(originalAmount - discountAmount, 0)
+    : Number(row.actualAmount || 0)
+  return {
+    order_no: row.orderNo || '',
+    date,
+    month: String(date).slice(0, 7),
+    store_id: row.storeId || null,
+    store_name: normalizeStoreForWrite(row.storeName || row.store, profile?.store),
+    customer_id: row.customerId || null,
+    customer_name: row.customerName || '',
+    customer_phone: row.customerPhone || '',
+    project_id: row.projectId || null,
+    project_name: row.projectName || '',
+    project_category: row.projectCategory || '',
+    quantity,
+    original_amount: originalAmount,
+    discount_amount: discountAmount,
+    actual_amount: actualAmount,
+    consume_amount: Number(row.consumeAmount || 0),
+    payment_type: row.paymentType || 'cash',
+    service_employee_id: row.serviceEmployeeId || null,
+    service_employee_name: row.serviceEmployeeName || '',
+    sales_employee_id: row.salesEmployeeId || null,
+    sales_employee_name: row.salesEmployeeName || '',
+    consultant_id: row.consultantId || null,
+    consultant_name: row.consultantName || '',
+    manual_commission_amount: manualCommission * quantity,
+    remark: row.remark || '',
+    status: row.status || 'active',
+    updated_at: new Date().toISOString(),
+  }
+}
+
+export function cashierOrderToPerformanceRecord(order) {
+  return {
+    id: order.id,
+    date: order.date,
+    month: order.month || String(order.date || '').slice(0, 7),
+    storeId: order.storeId,
+    storeName: normalizeStoreName(order.storeName || order.store),
+    customerId: order.customerId,
+    customerName: order.customerName,
+    projectId: order.projectId,
+    projectName: order.projectName,
+    projectCategory: order.projectCategory,
+    amount: Number(order.actualAmount || 0),
+    consumeAmount: Number(order.consumeAmount || 0),
+    paymentType: order.paymentType,
+    serviceEmployeeId: order.serviceEmployeeId,
+    serviceEmployeeName: order.serviceEmployeeName,
+    salesEmployeeId: order.salesEmployeeId,
+    salesEmployeeName: order.salesEmployeeName,
+    consultantId: order.consultantId,
+    consultantName: order.consultantName,
+    quantity: Number(order.quantity || 1),
+    manualCommissionAmount: Number(order.manualCommissionAmount || 0),
+    remark: order.remark || '',
+    status: order.status || 'active',
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+  }
+}

@@ -238,9 +238,7 @@ using (
 );
 
 drop policy if exists project_commission_settings_select_scope on public.project_commission_settings;
-create policy project_commission_settings_select_scope on public.project_commission_settings for select to authenticated using (
-  public.current_profile_role() = 'boss'
-);
+create policy project_commission_settings_select_scope on public.project_commission_settings for select to authenticated using (true);
 
 drop policy if exists project_commission_settings_insert_scope on public.project_commission_settings;
 create policy project_commission_settings_insert_scope on public.project_commission_settings for insert to authenticated

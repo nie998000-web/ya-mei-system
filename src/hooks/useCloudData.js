@@ -5,6 +5,7 @@ import {
 } from '../data/seedData'
 import {
   fromCustomer,
+  fromCashierOrder,
   fromEmployee,
   fromFollowup,
   fromPerformanceReport,
@@ -14,6 +15,7 @@ import {
   fromStoreTarget,
   normalizeStoreName,
   toEmployee,
+  toCashierOrder,
   toFollowup,
   toPerformanceReport,
   toProjectCommission,
@@ -60,6 +62,7 @@ const employeeSelectFields = 'id,name,phone,store,role,note,base_salary,social_s
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
 const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,manual_commission_amount,remark,created_at,updated_at'
+const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,manual_commission_amount,remark,status,created_at,updated_at'
 const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
@@ -135,6 +138,7 @@ export function useCloudData(session) {
   const [reviews, setReviews] = useState([])
   const [performanceReports, setPerformanceReports] = useState([])
   const [performanceRecords, setPerformanceRecords] = useState([])
+  const [cashierOrders, setCashierOrders] = useState([])
   const [projectCommissions, setProjectCommissions] = useState([])
   const [storeTargets, setStoreTargets] = useState([])
   const [storeNames, setStoreNames] = useState(fixedStores)
@@ -146,6 +150,7 @@ export function useCloudData(session) {
   const [dailyReviewError, setDailyReviewError] = useState('')
   const [performanceReportError, setPerformanceReportError] = useState('')
   const [performanceRecordError, setPerformanceRecordError] = useState('')
+  const [cashierOrderError, setCashierOrderError] = useState('')
   const [projectCommissionError, setProjectCommissionError] = useState('')
   const [storeTargetError, setStoreTargetError] = useState('')
 
@@ -405,6 +410,42 @@ export function useCloudData(session) {
     }
   }, [])
 
+  const loadCashierOrders = useCallback(async (profileData) => {
+    if (!supabase || !profileData) return false
+    setCashierOrderError('')
+
+    try {
+      let query = supabase
+        .from('cashier_orders')
+        .select(cashierOrderSelectFields)
+        .order('date', { ascending: false })
+        .order('created_at', { ascending: false })
+
+      if (!isBossRole(profileData.role)) query = query.eq('store_name', profileStore(profileData))
+      if (isBeauticianRole(profileData.role) && profileData.name) {
+        query = query.or(`service_employee_name.eq.${profileData.name},sales_employee_name.eq.${profileData.name},consultant_name.eq.${profileData.name}`)
+      }
+
+      const { data, error: ordersError } = await query
+      if (ordersError) {
+        const message = errorMessage(ordersError)
+        console.error('cashier_orders 查询失败:', ordersError)
+        setCashierOrderError(message)
+        setCashierOrders([])
+        return false
+      }
+
+      setCashierOrders((data || []).map(fromCashierOrder))
+      return true
+    } catch (ordersError) {
+      const message = errorMessage(ordersError)
+      console.error('cashier_orders 查询异常:', ordersError)
+      setCashierOrderError(message)
+      setCashierOrders([])
+      return false
+    }
+  }, [])
+
   const loadProjectCommissions = useCallback(async () => {
     if (!supabase) return false
     setProjectCommissionError('')
@@ -479,6 +520,7 @@ export function useCloudData(session) {
     setDailyReviewError('')
     setPerformanceReportError('')
     setPerformanceRecordError('')
+    setCashierOrderError('')
     setProjectCommissionError('')
     setStoreTargetError('')
 
@@ -542,17 +584,18 @@ export function useCloudData(session) {
       const namesFromDb = storesRes.error ? [] : (storesRes.data || []).map((store) => store.name)
       setStoreNames(normalizeStoreNames(namesFromDb))
 
-      const [customersOk, followupsOk, employeesOk, dailyReviewsOk, performanceReportsOk, performanceRecordsOk, projectCommissionsOk, storeTargetsOk] = await Promise.all([
+      const [customersOk, followupsOk, employeesOk, dailyReviewsOk, performanceReportsOk, performanceRecordsOk, cashierOrdersOk, projectCommissionsOk, storeTargetsOk] = await Promise.all([
         loadCustomers(activeProfile),
         loadFollowups(activeProfile),
         loadEmployees(activeProfile),
         loadDailyReviews(activeProfile),
         loadPerformanceReports(activeProfile),
         loadPerformanceRecords(activeProfile),
+        loadCashierOrders(activeProfile),
         loadProjectCommissions(),
         loadStoreTargets(activeProfile),
       ])
-      if (errors.length || !customersOk || !followupsOk || !employeesOk || !dailyReviewsOk || !performanceReportsOk || !performanceRecordsOk || !projectCommissionsOk || !storeTargetsOk) {
+      if (errors.length || !customersOk || !followupsOk || !employeesOk || !dailyReviewsOk || !performanceReportsOk || !performanceRecordsOk || !cashierOrdersOk || !projectCommissionsOk || !storeTargetsOk) {
         setError((current) => [current, ...errors].filter(Boolean).join('；'))
       }
     } catch (loadError) {
@@ -562,7 +605,7 @@ export function useCloudData(session) {
     } finally {
       setLoading(false)
     }
-  }, [session, loadCustomers, loadFollowups, loadEmployees, loadDailyReviews, loadPerformanceReports, loadPerformanceRecords, loadProjectCommissions, loadStoreTargets])
+  }, [session, loadCustomers, loadFollowups, loadEmployees, loadDailyReviews, loadPerformanceReports, loadPerformanceRecords, loadCashierOrders, loadProjectCommissions, loadStoreTargets])
 
   useEffect(() => {
     loadAll()
@@ -769,6 +812,42 @@ export function useCloudData(session) {
     await loadPerformanceReports(profile)
   }
 
+  const saveCashierOrder = async (row) => {
+    const payload = {
+      ...toCashierOrder(row, profile),
+      store_name: writeStoreForProfile(row.storeName || row.store, profile),
+      status: row.status || 'active',
+    }
+    if (isBeauticianRole(profile?.role)) {
+      payload.service_employee_name = profile.name
+      payload.sales_employee_name = profile.name
+    }
+    const request = row.id
+      ? supabase.from('cashier_orders').update(payload).eq('id', row.id).select(cashierOrderSelectFields).single()
+      : supabase.from('cashier_orders').insert(payload).select(cashierOrderSelectFields).single()
+    const { data, error: saveError } = await request
+    if (saveError) throw new Error(errorMessage(saveError))
+    if (data) {
+      const mapped = fromCashierOrder(data)
+      setCashierOrders((list) => (row.id ? list.map((item) => (item.id === row.id ? mapped : item)) : [mapped, ...list]))
+    }
+    await Promise.all([
+      loadCashierOrders(profile),
+      loadPerformanceReports(profile),
+      loadPerformanceRecords(profile),
+      loadStoreTargets(profile),
+    ])
+  }
+
+  const voidCashierOrder = async (id) => {
+    const { error: voidError } = await supabase
+      .from('cashier_orders')
+      .update({ status: 'voided', updated_at: new Date().toISOString() })
+      .eq('id', id)
+    if (voidError) throw new Error(errorMessage(voidError))
+    await loadCashierOrders(profile)
+  }
+
   const saveStoreTarget = async (row) => {
     const payload = {
       ...toStoreTarget(row, profile),
@@ -871,6 +950,7 @@ export function useCloudData(session) {
     reviews,
     performanceReports,
     performanceRecords,
+    cashierOrders,
     projectCommissions,
     storeTargets,
     loading,
@@ -881,6 +961,7 @@ export function useCloudData(session) {
     dailyReviewError,
     performanceReportError,
     performanceRecordError,
+    cashierOrderError,
     projectCommissionError,
     storeTargetError,
     refresh: loadAll,
@@ -890,6 +971,7 @@ export function useCloudData(session) {
     loadDailyReviews,
     loadPerformanceReports,
     loadPerformanceRecords,
+    loadCashierOrders,
     loadProjectCommissions,
     loadStoreTargets,
     saveCustomer,
@@ -902,6 +984,8 @@ export function useCloudData(session) {
     deleteReview,
     savePerformanceReport,
     deletePerformanceReport,
+    saveCashierOrder,
+    voidCashierOrder,
     saveStoreTarget,
     saveProjectCommission,
     saveEmployee,
