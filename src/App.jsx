@@ -2801,6 +2801,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     setCustomerSearch(customer ? `${customer.name} ${customer.phone || ''}` : '')
     setShowCustomerResults(false)
   }
+  const chooseCustomerById = (value) => {
+    const customer = customers.find((item) => String(item.id) === String(value))
+    chooseCustomer(customer || null)
+  }
   const updateItem = (index, patch) => {
     const orderItems = form.orderItems.map((item, itemIndex) => {
       if (itemIndex !== index) return item
@@ -2853,8 +2857,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     setValidationError('')
     const orderItems = form.orderItems.filter((item) => item.projectId || item.projectName)
     if (!form.customerId && !form.customerName) {
-      setValidationError('请选择顾客。')
-      throw new Error('请选择顾客。')
+      setValidationError('请先选择顾客')
+      throw new Error('请先选择顾客')
     }
     if (orderItems.length === 0) {
       setValidationError('请至少添加 1 个项目。')
@@ -2905,6 +2909,13 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
               </button>
             ))}
           </div>}
+          <div className="mt-3">
+            <Select
+              value={form.customerId || ''}
+              onChange={chooseCustomerById}
+              options={customers.length ? [['', '请选择顾客'], ...customers.map((customer) => [customer.id, `${customer.name}｜${customer.phone || '无手机号'}｜${customer.store || '未设置门店'}`])] : [['', '暂无顾客，请先到顾客管理添加']]}
+            />
+          </div>
           {(form.customerName || form.customerPhone) && (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-pink-100 bg-white px-4 py-3 text-sm text-[#5f263c]">
               <span>已选择：{form.customerName || '-'}｜{form.customerPhone || '-'}｜{form.storeName || '-'}</span>
