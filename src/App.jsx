@@ -80,6 +80,27 @@ function staffOptionLabel(employee) {
   return `${employee.name || '未命名'}｜${roleLabel(normalizeStaffRole(employee.role)) || employee.role || '未设置岗位'}｜${normalizeStoreName(employee.store) || employee.store || '未设置门店'}`
 }
 
+function normalizeRecordStore(record) {
+  const rawStore = record?.store
+    || record?.storeName
+    || record?.store_name
+    || record?.branch
+    || record?.shopName
+    || record?.shop_name
+
+  const normalizedRawStore = normalizeStoreName(rawStore)
+  if (normalizedRawStore) return normalizedRawStore
+
+  const rawStoreId = record?.storeId || record?.store_id
+  const legacyStoreMap = {
+    1: '龙泉1店',
+    2: '龙泉2店',
+    3: '龙泉金龙店',
+    4: '郫县1店',
+  }
+  return normalizeStoreName(storeNameFromId(rawStoreId) || legacyStoreMap[String(rawStoreId)] || rawStoreId)
+}
+
 const customerImportHeaders = {
   name: ['姓名', '顾客姓名', '客户姓名', 'name'],
   phone: ['手机号', '电话', '手机', 'phone'],
@@ -2776,7 +2797,9 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'director', 'admin', 'regional_manager'])
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
-  const customerResults = customers
+  const selectedStoreName = normalizeStoreName(form.storeName)
+  const storeCustomers = customers.filter((customer) => normalizeRecordStore(customer) === selectedStoreName)
+  const customerResults = storeCustomers
     .filter((item) => {
       if (!normalizedCustomerSearch) return true
       return String(item.name || '').toLowerCase().includes(normalizedCustomerSearch)
@@ -2796,14 +2819,19 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       customerId: customer?.id || '',
       customerName: customer?.name || '',
       customerPhone: customer?.phone || '',
-      storeName: customer?.store || form.storeName,
+      storeName: form.storeName,
     })
     setCustomerSearch(customer ? `${customer.name} ${customer.phone || ''}` : '')
     setShowCustomerResults(false)
   }
   const chooseCustomerById = (value) => {
-    const customer = customers.find((item) => String(item.id) === String(value))
+    const customer = storeCustomers.find((item) => String(item.id) === String(value))
     chooseCustomer(customer || null)
+  }
+  const changeStore = (value) => {
+    setForm({ ...form, storeName: value, customerId: '', customerName: '', customerPhone: '' })
+    setCustomerSearch('')
+    setShowCustomerResults(false)
   }
   const updateItem = (index, patch) => {
     const orderItems = form.orderItems.map((item, itemIndex) => {
@@ -2856,9 +2884,14 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const validateAndSave = () => {
     setValidationError('')
     const orderItems = form.orderItems.filter((item) => item.projectId || item.projectName)
-    if (!form.customerId && !form.customerName) {
+    if (!form.customerId) {
       setValidationError('请先选择顾客')
       throw new Error('请先选择顾客')
+    }
+    const selectedCustomer = storeCustomers.find((customer) => String(customer.id) === String(form.customerId))
+    if (!selectedCustomer || normalizeRecordStore(selectedCustomer) !== selectedStoreName) {
+      setValidationError('顾客不属于当前门店，请重新选择顾客')
+      throw new Error('顾客不属于当前门店，请重新选择顾客')
     }
     if (orderItems.length === 0) {
       setValidationError('请至少添加 1 个项目。')
@@ -2892,7 +2925,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
           {lockedStore ? (
             <LockedStoreDisplay value={fixedStore} />
           ) : (
-            <Select value={form.storeName} onChange={(value) => setForm({ ...form, storeName: value })} options={stores} />
+            <Select value={form.storeName} onChange={changeStore} options={stores} />
           )}
         </Field>
         <Field label="顾客搜索" full>
@@ -2902,10 +2935,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
             if (!value) chooseCustomer(null)
           }} placeholder="输入顾客姓名或手机号搜索" />
           {showCustomerResults && <div className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-pink-100 bg-white shadow-sm">
-            {customerResults.length === 0 && <div className="px-4 py-3 text-sm text-[#8a4964]">未找到顾客，可先去顾客管理新增</div>}
+            {customerResults.length === 0 && <div className="px-4 py-3 text-sm text-[#8a4964]">未找到顾客，请先到顾客管理新增</div>}
             {customerResults.map((customer) => (
               <button key={customer.id} type="button" onClick={() => chooseCustomer(customer)} className="block w-full cursor-pointer border-b border-pink-50 px-4 py-3 text-left text-sm text-[#5f263c] transition hover:bg-[#ffe4ef] hover:text-[#bd1657]">
-                {customer.name}｜{customer.phone || '无手机号'}｜{customer.store || '未设置门店'}
+                {customer.name}｜{customer.phone || '无手机号'}｜{normalizeRecordStore(customer) || '未设置门店'}
               </button>
             ))}
           </div>}
@@ -2913,7 +2946,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
             <Select
               value={form.customerId || ''}
               onChange={chooseCustomerById}
-              options={customers.length ? [['', '请选择顾客'], ...customers.map((customer) => [customer.id, `${customer.name}｜${customer.phone || '无手机号'}｜${customer.store || '未设置门店'}`])] : [['', '暂无顾客，请先到顾客管理添加']]}
+              options={storeCustomers.length ? [['', '请选择顾客'], ...storeCustomers.map((customer) => [customer.id, `${customer.name}｜${customer.phone || '无手机号'}｜${normalizeRecordStore(customer) || '未设置门店'}`])] : [['', '暂无该门店顾客，请先到顾客管理添加']]}
             />
           </div>
           {(form.customerName || form.customerPhone) && (
