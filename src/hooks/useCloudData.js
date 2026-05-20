@@ -14,6 +14,7 @@ import {
   fromProjectCommission,
   fromReview,
   fromStoreTarget,
+  isUuid,
   normalizeStoreName,
   toEmployee,
   toCashierOrder,
@@ -819,22 +820,47 @@ export function useCloudData(session) {
   }
 
   const saveCashierOrder = async (row) => {
+    const storeName = writeStoreForProfile(row.storeName || row.store, profile)
+    const invalidUuidPayload = [
+      row.customerId,
+      ...(Array.isArray(row.orderItems) ? row.orderItems.map((item) => item.projectId) : [row.projectId]),
+      row.serviceEmployeeId,
+      row.salesEmployeeId,
+      row.consultantId || null,
+    ].filter((value) => value && !isUuid(value))
+    if (invalidUuidPayload.length > 0) {
+      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
+    }
     const payload = {
       ...toCashierOrder(row, profile),
-      store_name: writeStoreForProfile(row.storeName || row.store, profile),
+      store_name: storeName,
       status: row.status || 'active',
+    }
+    if (!payload.store_id && storeName) {
+      const { data: storeRow, error: storeError } = await supabase
+        .from('stores')
+        .select('id')
+        .eq('name', storeName)
+        .maybeSingle()
+      if (!storeError && isUuid(storeRow?.id)) payload.store_id = storeRow.id
+    }
+    if (!payload.store_id) {
+      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
     if (isBeauticianRole(profile?.role)) {
       payload.service_employee_name = profile.name
       payload.sales_employee_name = profile.name
     }
-    const request = row.id
+    console.log('cashier submit payload', payload)
+    const request = row.id && isUuid(row.id)
       ? supabase.from('cashier_orders').update(payload).eq('id', row.id).select(cashierOrderSelectFields).single()
       : supabase.from('cashier_orders').insert(payload).select(cashierOrderSelectFields).single()
     const { data, error: saveError } = await request
     if (saveError) throw new Error(errorMessage(saveError))
     const orderItems = Array.isArray(row.orderItems) && row.orderItems.length ? row.orderItems : []
-    if (data?.id && orderItems.length > 0) {
+    if (data?.id && isUuid(data.id) && orderItems.length > 0) {
+      const invalidItemIds = orderItems.map((item) => item.projectId).filter((value) => value && !isUuid(value))
+      if (invalidItemIds.length > 0) throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
       const { error: deleteItemsError } = await supabase
         .from('cashier_order_items')
         .delete()

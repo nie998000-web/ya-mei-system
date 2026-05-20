@@ -18,6 +18,14 @@ function normalizeStoreForWrite(rowStore, profileStore) {
   return normalizeStoreName(rowStore) || normalizeStoreName(profileStore) || validStoreNames[0]
 }
 
+export function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim())
+}
+
+function uuidOrNull(value) {
+  return isUuid(value) ? String(value).trim() : null
+}
+
 export function fromCustomer(row) {
   const storeName = normalizeStoreName(row.store) || validStoreNames[0]
   return {
@@ -77,7 +85,7 @@ export function toEmployee(row, profile) {
 export function fromFollowup(row) {
   return {
     id: row.id,
-    customerId: row.customer_id == null ? '' : Number(row.customer_id),
+    customerId: row.customer_id || '',
     customerName: row.customer_name || '',
     customerPhone: row.customer_phone || '',
     date: row.created_at ? String(row.created_at).slice(0, 10) : '',
@@ -97,12 +105,8 @@ export function fromFollowup(row) {
 }
 
 export function toFollowup(row, profile) {
-  const customerId = row.customerId === undefined || row.customerId === null || row.customerId === ''
-    ? null
-    : Number(row.customerId)
-
   return {
-    customer_id: Number.isFinite(customerId) ? customerId : null,
+    customer_id: uuidOrNull(row.customerId),
     customer_name: row.customerName || '',
     customer_phone: row.customerPhone || '',
     store: normalizeStoreForWrite(row.store, profile?.store),
@@ -390,12 +394,12 @@ export function toCashierOrder(row, profile) {
     order_no: row.orderNo || '',
     date,
     month: String(date).slice(0, 7),
-    store_id: row.storeId || null,
+    store_id: uuidOrNull(row.storeId),
     store_name: normalizeStoreForWrite(row.storeName || row.store, profile?.store),
-    customer_id: row.customerId || null,
+    customer_id: uuidOrNull(row.customerId),
     customer_name: row.customerName || '',
     customer_phone: row.customerPhone || '',
-    project_id: firstItem.projectId || null,
+    project_id: uuidOrNull(firstItem.projectId),
     project_name: items.length > 1 ? items.map((item) => item.projectName).filter(Boolean).join(' + ') : firstItem.projectName || '',
     project_category: firstItem.projectCategory || '',
     quantity,
@@ -404,11 +408,11 @@ export function toCashierOrder(row, profile) {
     actual_amount: actualAmount,
     consume_amount: consumeAmount,
     payment_type: row.paymentType || 'cash',
-    service_employee_id: row.serviceEmployeeId || null,
+    service_employee_id: uuidOrNull(row.serviceEmployeeId),
     service_employee_name: row.serviceEmployeeName || '',
-    sales_employee_id: row.salesEmployeeId || null,
+    sales_employee_id: uuidOrNull(row.salesEmployeeId),
     sales_employee_name: row.salesEmployeeName || '',
-    consultant_id: row.consultantId || null,
+    consultant_id: uuidOrNull(row.consultantId),
     consultant_name: row.consultantName || '',
     manual_commission_amount: 0,
     remark: row.remark || '',
@@ -440,7 +444,7 @@ export function toCashierOrderItem(item, orderId) {
   const manualCommission = Number(item.manualCommission || 0)
   return {
     order_id: orderId,
-    project_id: item.projectId || null,
+    project_id: uuidOrNull(item.projectId),
     project_name: item.projectName || '',
     project_category: item.projectCategory || '',
     quantity,

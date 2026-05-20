@@ -9,7 +9,7 @@ import {
 import { defaultProjectCommissions } from './data/salarySeedData'
 import { menuLabels, menuPermissions, sensitiveRoutes } from './config/menuPermissions'
 import { canManage, useCloudData } from './hooks/useCloudData'
-import { cashierOrderToPerformanceRecord, normalizeStoreName, validStoreNames } from './lib/mappers'
+import { cashierOrderToPerformanceRecord, isUuid, normalizeStoreName, validStoreNames } from './lib/mappers'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { ageFromBirthday, daysSince, normalizeDateInput, percent, todayString } from './utils/date'
 import { money } from './utils/format'
@@ -27,6 +27,7 @@ const navItems = Object.entries(menuLabels)
 const routeToMenuKey = Object.entries(sensitiveRoutes).reduce((map, [path, key]) => ({ ...map, [path]: key }), { '/cashier': 'cashier' })
 const devRoleSwitcherEnabled = import.meta.env.DEV
 const devRoleStorageKey = 'yaMeiDevRole'
+const legacyIdCacheKeys = ['selectedStore', 'dashboardSelectedStore', 'cashierCustomerId', 'cashierProjectId', 'cashierEmployeeId', 'cashierOrderId', 'customerId', 'projectId', 'employeeId', 'storeId']
 
 function isBossRole(role) {
   const value = String(role || '').trim().toLowerCase()
@@ -377,6 +378,21 @@ function App() {
   const [active, setActive] = useState(() => routeToMenuKey[window.location.pathname] || 'dashboard')
   const [devUsername, setDevUsername] = useState(() => localStorage.getItem(devRoleStorageKey) || 'admin')
   const cloud = useCloudData(session)
+
+  useEffect(() => {
+    const storageKeys = [
+      ...legacyIdCacheKeys,
+      ...Object.keys(localStorage).filter((key) => /cashier|customer|project|employee|store|order/i.test(key)),
+      ...Object.keys(sessionStorage).filter((key) => /cashier|customer|project|employee|store|order/i.test(key)),
+    ]
+    unique(storageKeys).forEach((key) => {
+      const value = localStorage.getItem(key) || sessionStorage.getItem(key)
+      if (value && /^\d+$/.test(value)) {
+        localStorage.removeItem(key)
+        sessionStorage.removeItem(key)
+      }
+    })
+  }, [])
 
   const enrichedCustomers = useMemo(
     () =>
@@ -1831,7 +1847,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
           data={editing}
           customers={customers}
           employees={employees}
-          projects={standardProjects.filter((item) => item.isActive !== false)}
+          projects={standardProjects.filter((item) => item.isActive !== false && isUuid(item.id))}
           stores={stores}
           profile={profile}
           lockedStore={!canChooseStore}
@@ -2788,6 +2804,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const staffInStore = employees
     .filter((item) => !lockedStore || !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
   const staffOptionsByRoles = (roles) => staffInStore
+    .filter((item) => isUuid(item.id))
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
   const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
@@ -2795,7 +2812,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
   const selectedStoreName = normalizeStoreName(form.storeName)
-  const storeCustomers = customers.filter((customer) => normalizeRecordStore(customer) === selectedStoreName)
+  const storeCustomers = customers.filter((customer) => isUuid(customer.id) && normalizeRecordStore(customer) === selectedStoreName)
   const customerResults = storeCustomers
     .filter((item) => {
       if (!normalizedCustomerSearch) return true
@@ -2852,7 +2869,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       const includeManualCommission = selected?.includeManualCommission !== false
       return {
         ...item,
-        projectId: value,
+        projectId: isUuid(value) ? value : '',
         projectName: selected?.projectName || '',
         projectCategory: selected?.category || '',
         originalAmount: selected?.defaultPrice || 0,
@@ -2892,7 +2909,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   }
   const chooseEmployee = (fieldId, fieldName, value) => {
     const employee = employees.find((item) => String(item.id) === String(value))
-    setForm({ ...form, [fieldId]: value, [fieldName]: employee?.name || '' })
+    setForm({ ...form, [fieldId]: isUuid(value) ? value : '', [fieldName]: employee?.name || '' })
   }
   const validateAndSave = () => {
     setValidationError('')
@@ -2906,6 +2923,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('顾客不属于当前门店，请重新选择顾客')
       throw new Error('顾客不属于当前门店，请重新选择顾客')
     }
+    if (!isUuid(form.customerId) || (form.storeId && !isUuid(form.storeId))) {
+      setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
+      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
+    }
     if (orderItems.length === 0) {
       setValidationError('请至少添加 1 个项目。')
       throw new Error('请至少添加 1 个项目。')
@@ -2915,6 +2936,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
       throw new Error(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
     }
+    if (orderItems.some((item) => !isUuid(item.projectId))) {
+      setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
+      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
+    }
     if (!form.serviceEmployeeName) {
       setValidationError('请选择操作老师。')
       throw new Error('请选择操作老师。')
@@ -2922,6 +2947,10 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     if (!form.salesEmployeeName) {
       setValidationError('请选择开单人。')
       throw new Error('请选择开单人。')
+    }
+    if (!isUuid(form.serviceEmployeeId) || !isUuid(form.salesEmployeeId) || (form.consultantId && !isUuid(form.consultantId))) {
+      setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
+      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
     return onSave({ ...form, orderItems, ...totals, remark: remarkWithPerformanceType(form.performanceType, form.remark) })
   }
