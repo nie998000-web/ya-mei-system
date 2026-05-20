@@ -61,17 +61,17 @@ function isValidRole(role) {
 
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
-const customerSelectFields = 'id,name,phone,age,birthday,store_id,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
-const customerLegacySelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
-const employeeSelectFields = 'id,name,phone,store_id,store,role,note,entry_date,is_active,created_at,updated_at'
-const employeeLegacySelectFields = 'id,name,phone,store,role,note,entry_date,is_active,created_at,updated_at'
+const customerSelectFields = '*'
+const customerLegacySelectFields = '*'
+const employeeSelectFields = '*'
+const employeeLegacySelectFields = '*'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
 const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,remark,created_at,updated_at'
-const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,remark,status,created_at,updated_at'
-const cashierOrderLegacySelectFields = 'id,order_no,date,month,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,remark,status,created_at,updated_at'
+const cashierOrderSelectFields = '*'
+const cashierOrderLegacySelectFields = '*'
 const cashierOrderItemSelectFields = 'id,order_id,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,manual_commission,manual_commission_amount,duration_minutes,created_at'
-const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
+const projectCommissionSelectFields = '*'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
 const reviewSelectFields = 'id,date,store,invite_rate,appointment_rate,arrival_rate,deal_rate,deal_amount,unfinished_reason,tomorrow_action,created_at'
@@ -383,7 +383,6 @@ export function useCloudData(session) {
       let query = supabase
         .from('customers')
         .select(useStoreId ? customerSelectFields : customerLegacySelectFields)
-        .order('name', { ascending: true })
 
       if (shouldFilterByStore(profileData)) {
         query = useStoreId && isDbId(profileData.storeId)
@@ -678,8 +677,6 @@ export function useCloudData(session) {
       let query = supabase
         .from('cashier_orders')
         .select(useStoreId ? cashierOrderSelectFields : cashierOrderLegacySelectFields)
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false })
 
       if (!isBossRole(profileData.role)) {
         query = useStoreId && isDbId(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
@@ -755,7 +752,6 @@ export function useCloudData(session) {
       const { data: standardRows, error: standardError } = await supabase
         .from('projects')
         .select(projectStandardSelectFields)
-        .order('project_name', { ascending: true })
 
       if (!standardError) {
         setProjectSource('projects')
@@ -777,12 +773,22 @@ export function useCloudData(session) {
         return true
       }
 
-      console.warn('projects 查询失败，尝试旧项目表 project_commission_settings:', standardError)
+      console.warn('projects 查询失败，尝试项目标准库 project_standard_library:', standardError)
+      const { data: standardLibraryRows, error: standardLibraryError } = await supabase
+        .from('project_standard_library')
+        .select('*')
+      if (!standardLibraryError) {
+        setProjectSource('project_standard_library')
+        const rows = standardLibraryRows?.length ? standardLibraryRows : fallbackProjects()
+        setProjectCommissions(rows.map(fromProjectCommission))
+        return true
+      }
+
+      console.warn('project_standard_library 查询失败，尝试旧项目表 project_commission_settings:', standardLibraryError)
       setProjectSource('project_commission_settings')
       const { data, error: projectsError } = await supabase
         .from('project_commission_settings')
         .select(projectCommissionSelectFields)
-        .order('project_name', { ascending: true })
 
       if (projectsError) {
         const message = errorMessage(projectsError)
@@ -956,7 +962,7 @@ export function useCloudData(session) {
       }
 
       if (errors.length) {
-        setError(`云端数据读取失败，当前使用本地兜底数据，请检查数据库字段。${errors.join('；')}`)
+        setError(`云端数据部分读取失败，已对失败模块启用兜底：${errors.join('；')}`)
       }
     } catch (loadError) {
       const message = errorMessage(loadError)
@@ -978,7 +984,7 @@ export function useCloudData(session) {
       setCashierOrders([])
       setProjectCommissions(fallbackProjects().map(fromProjectCommission))
       setStoreTargets([])
-      setError(`云端数据读取失败，当前使用本地兜底数据，请检查数据库字段。${message}`)
+      setError(`云端数据部分读取失败，已对失败模块启用兜底：${message}`)
     } finally {
       setLoading(false)
     }

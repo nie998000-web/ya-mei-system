@@ -23,7 +23,7 @@ import {
   testUsers,
 } from './utils/permission'
 
-const ENABLE_CLOUD_DATA = false
+const ENABLE_CLOUD_DATA = true
 
 const navItems = Object.entries(menuLabels)
 const routeToMenuKey = Object.entries(sensitiveRoutes).reduce((map, [path, key]) => ({ ...map, [path]: key }), { '/cashier': 'cashier' })

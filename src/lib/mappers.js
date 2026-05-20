@@ -38,38 +38,40 @@ function dbIdOrNull(value) {
 }
 
 export function fromCustomer(row, storeById = new Map()) {
-  const storeId = row.store_id || row.storeId || ''
-  const storeName = normalizeStoreName(storeById.get(String(storeId)) || row.store) || validStoreNames[0]
+  const storeId = row.store_id || row.storeId || row.current_store_id || row.shop_id || row.branch_id || ''
+  const rawStore = storeById.get(String(storeId)) || row.store || row.store_name || row.branch || row.shopName || row.shop_name || ''
+  const storeName = normalizeStoreName(rawStore) || rawStore || ''
   return {
     id: row.id,
-    name: String(row.name ?? ''),
-    phone: String(row.phone ?? ''),
+    name: String(row.name ?? row.customer_name ?? row.customerName ?? ''),
+    phone: String(row.phone ?? row.mobile ?? row.customer_phone ?? row.tel ?? ''),
     age: row.age ?? '',
-    birthday: row.birthday ?? '',
-    isNewCustomer: Boolean(row.is_new_customer),
+    birthday: row.birthday ?? row.birth_date ?? row.birthDate ?? '',
+    isNewCustomer: Boolean(row.is_new_customer ?? row.isNewCustomer ?? false),
     storeId,
     store: storeName,
-    owner: String(row.owner ?? ''),
-    level: String(row.level || ''),
-    lastVisit: row.last_visit ?? '',
-    lastFollowResult: row.last_follow_result || '未联系',
+    owner: String(row.owner ?? row.beautician ?? row.staff_name ?? row.employee_name ?? row.owner_name ?? row.responsible_staff ?? ''),
+    level: String(row.level || row.customer_level || ''),
+    lastVisit: row.last_visit ?? row.last_visit_date ?? row.recent_visit ?? row.lastVisit ?? '',
+    lastFollowResult: row.last_follow_result || row.follow_status || '未联系',
     lastFollowTime: row.last_follow_time || '',
-    nextFollowTime: row.next_follow_time || '',
-    followStatus: row.follow_status || '未联系',
-    followNote: row.follow_note || '',
+    nextFollowTime: row.next_follow_time || row.next_follow_date || '',
+    followStatus: row.follow_status || row.last_follow_result || '未联系',
+    followNote: row.follow_note || row.note || '',
     todayTaskCompletedAt: row.today_task_completed_at || '',
   }
 }
 
 export function fromEmployee(row, storeById = new Map()) {
-  const storeId = row.store_id || row.storeId || ''
+  const storeId = row.store_id || row.storeId || row.shop_id || row.branch_id || ''
+  const rawStore = storeById.get(String(storeId)) || row.store || row.store_name || row.shop_name || row.branch || ''
   return {
     id: row.id,
-    name: row.name || '',
-    phone: row.phone || '',
+    name: row.name || row.employee_name || row.staff_name || '',
+    phone: row.phone || row.mobile || '',
     storeId,
-    store: normalizeStoreName(storeById.get(String(storeId)) || row.store) || row.store || '',
-    role: row.role || 'beautician',
+    store: normalizeStoreName(rawStore) || rawStore || '',
+    role: row.role || row.staff_role || row.position || row.job_title || 'beautician',
     entryDate: row.entry_date || '',
     isActive: row.is_active !== false,
     today_followups: row.today_followups ?? 0,
@@ -271,18 +273,18 @@ export function fromProjectCommission(row) {
   }
   return {
     id: row.id,
-    projectName: row.project_name || row.name || '',
-    category: row.category || 'other',
-    defaultPrice: Number(row.default_price ?? config.defaultPrice ?? 0),
-    manualCommission: Number(row.fixed_manual_commission ?? row.manual_commission ?? config.manualCommission ?? 0),
-    durationMinutes: row.duration_minutes ?? '',
+    projectName: row.project_name || row.name || row.projectName || '',
+    category: row.category || row.project_category || 'other',
+    defaultPrice: Number(row.default_price ?? row.price ?? row.defaultPrice ?? config.defaultPrice ?? 0),
+    manualCommission: Number(row.fixed_manual_commission ?? row.fixed_handwork_fee ?? row.handwork_fee ?? row.manual_commission ?? row.manualCommission ?? config.manualCommission ?? 0),
+    durationMinutes: row.duration_minutes ?? row.duration ?? row.project_duration ?? row.durationMinutes ?? '',
     unit: row.unit || '次',
-    isCardConsumption: row.is_card_consumption ?? config.isCardConsumption ?? false,
-    isHighEnd: row.is_high_end ?? config.isHighEnd ?? false,
-    includeSaleCommission: row.include_sale_commission ?? config.includeSaleCommission ?? true,
-    includeManualCommission: row.include_manual_commission ?? config.includeManualCommission ?? true,
-    defaultPerformanceType: row.default_performance_type || config.defaultPerformanceType || '售前',
-    isActive: (row.is_enabled ?? row.is_active) !== false,
+    isCardConsumption: row.is_card_consumption ?? row.is_card_deduct ?? row.consume_card ?? config.isCardConsumption ?? false,
+    isHighEnd: row.is_high_end ?? row.isHighEnd ?? config.isHighEnd ?? false,
+    includeSaleCommission: row.include_sale_commission ?? row.allow_sales_commission ?? config.includeSaleCommission ?? true,
+    includeManualCommission: row.include_manual_commission ?? row.allow_handwork_commission ?? config.includeManualCommission ?? true,
+    defaultPerformanceType: row.default_performance_type || row.performance_type || config.defaultPerformanceType || '售前',
+    isActive: (row.is_enabled ?? row.enabled ?? row.is_active) !== false,
     remark: remarkText,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
