@@ -6,7 +6,7 @@ import {
   makeCustomerStatus,
   stores as defaultStores,
 } from './data/seedData'
-import { defaultProjectCommissions } from './data/salarySeedData'
+import { cashierSeedProjects } from './data/salarySeedData'
 import { menuLabels, menuPermissions, sensitiveRoutes } from './config/menuPermissions'
 import { canManage, useCloudData } from './hooks/useCloudData'
 import { cashierOrderToPerformanceRecord, isDbId, normalizeStoreName, validStoreNames } from './lib/mappers'
@@ -22,6 +22,8 @@ import {
   stripSalaryFields,
   testUsers,
 } from './utils/permission'
+
+const ENABLE_CLOUD_DATA = false
 
 const navItems = Object.entries(menuLabels)
 const routeToMenuKey = Object.entries(sensitiveRoutes).reduce((map, [path, key]) => ({ ...map, [path]: key }), { '/cashier': 'cashier' })
@@ -376,6 +378,141 @@ const emptyEmployee = {
   note: '',
 }
 
+function localStoreRecords() {
+  return defaultStores.map((name, index) => ({ id: index + 1, name }))
+}
+
+function localEmployees() {
+  return defaultStores.flatMap((store, storeIndex) => [
+    {
+      id: storeIndex * 3 + 1,
+      name: `${store}店长`,
+      phone: '',
+      storeId: storeIndex + 1,
+      store,
+      role: 'manager',
+      entryDate: '',
+      isActive: true,
+      today_followups: 0,
+      today_appointments: 0,
+      today_arrivals: 0,
+      today_deals: 0,
+      today_sales: 0,
+      note: '本地兜底员工',
+    },
+    {
+      id: storeIndex * 3 + 2,
+      name: `${store}顾问`,
+      phone: '',
+      storeId: storeIndex + 1,
+      store,
+      role: 'consultant',
+      entryDate: '',
+      isActive: true,
+      today_followups: 0,
+      today_appointments: 0,
+      today_arrivals: 0,
+      today_deals: 0,
+      today_sales: 0,
+      note: '本地兜底员工',
+    },
+    {
+      id: storeIndex * 3 + 3,
+      name: `${store}美容师`,
+      phone: '',
+      storeId: storeIndex + 1,
+      store,
+      role: 'beautician',
+      entryDate: '',
+      isActive: true,
+      today_followups: 0,
+      today_appointments: 0,
+      today_arrivals: 0,
+      today_deals: 0,
+      today_sales: 0,
+      note: '本地兜底员工',
+    },
+  ])
+}
+
+function localProjects() {
+  return cashierSeedProjects.map((project, index) => ({
+    ...project,
+    id: index + 1,
+    isActive: true,
+  }))
+}
+
+function useLocalFallbackCloud() {
+  const [customers, setCustomers] = useState([])
+  const [employees, setEmployees] = useState(() => localEmployees())
+  const [followups, setFollowups] = useState([])
+  const [reviews, setReviews] = useState([])
+  const [cashierOrders, setCashierOrders] = useState([])
+  const [projectCommissions, setProjectCommissions] = useState(() => localProjects())
+  const storeRecords = useMemo(() => localStoreRecords(), [])
+  const profile = useMemo(() => ({ id: 'local-boss', name: '老板', role: 'boss', store: defaultStores[0], storeId: 1 }), [])
+  const noopRefresh = async () => {}
+
+  const saveCustomer = async (row) => {
+    const next = { ...row, id: row.id || Date.now(), store: normalizeStoreName(row.store) || defaultStores[0] }
+    setCustomers((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const deleteCustomer = async (id) => setCustomers((list) => list.filter((item) => item.id !== id))
+  const saveFollowup = async (row) => {
+    const next = { ...row, id: row.id || Date.now(), createdAt: row.createdAt || new Date().toISOString() }
+    setFollowups((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const deleteFollowup = async (id) => setFollowups((list) => list.filter((item) => item.id !== id))
+  const saveReview = async (row) => {
+    const next = { ...row, id: row.id || Date.now() }
+    setReviews((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const deleteReview = async (id) => setReviews((list) => list.filter((item) => item.id !== id))
+  const saveCashierOrder = async (row) => {
+    const next = {
+      ...row,
+      id: row.id || Date.now(),
+      orderNo: row.orderNo || generateOrderNo(row.date),
+      storeName: normalizeStoreName(row.storeName || row.store) || defaultStores[0],
+      status: row.status || 'active',
+      createdAt: row.createdAt || new Date().toISOString(),
+    }
+    setCashierOrders((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const voidCashierOrder = async (id) => setCashierOrders((list) => list.map((item) => item.id === id ? { ...item, status: 'voided' } : item))
+  const saveProjectCommission = async (row) => {
+    const next = { ...row, id: row.id || Date.now() }
+    setProjectCommissions((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const saveEmployee = async (row) => {
+    const next = { ...row, id: row.id || Date.now(), store: normalizeStoreName(row.store) || defaultStores[0] }
+    setEmployees((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
+  }
+  const deleteEmployee = async (id) => setEmployees((list) => list.filter((item) => item.id !== id))
+
+  return {
+    profile, role: 'boss', roleLevel: 3, stores: defaultStores, storeRecords,
+    customers, employees, followups, reviews, performanceReports: [],
+    performanceRecords: cashierOrders.map(cashierOrderToPerformanceRecord), cashierOrders,
+    projectCommissions, storeTargets: [], loading: false,
+    error: '当前已启用本地保命模式：云端读取已临时关闭，系统可先正常进入页面。',
+    customerError: '', followupError: '', employeeError: '', dailyReviewError: '', performanceReportError: '',
+    performanceRecordError: '', cashierOrderError: '', projectCommissionError: '', storeTargetError: '',
+    refresh: noopRefresh, loadCustomers: noopRefresh, loadFollowups: noopRefresh, loadEmployees: noopRefresh,
+    loadDailyReviews: noopRefresh, loadPerformanceReports: noopRefresh, loadPerformanceRecords: noopRefresh,
+    loadCashierOrders: noopRefresh, loadProjectCommissions: noopRefresh, loadStoreTargets: noopRefresh,
+    saveCustomer, importCustomers: async (rows) => {
+      const nextRows = rows.map((row, index) => ({ ...row, id: Date.now() + index }))
+      setCustomers((list) => [...nextRows, ...list])
+      return { total: rows.length, created: rows.length, updated: 0, skipped: 0 }
+    },
+    deleteCustomer, updateCustomerStatus: async (id, changes) => setCustomers((list) => list.map((item) => item.id === id ? { ...item, ...changes } : item)),
+    saveFollowup, deleteFollowup, saveReview, deleteReview, saveCashierOrder, voidCashierOrder,
+    saveStoreTarget: noopRefresh, saveProjectCommission, saveEmployee, deleteEmployee,
+  }
+}
+
 class AppErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -396,7 +533,8 @@ class AppErrorBoundary extends Component {
         <div className="min-h-screen bg-[#fff4f8] p-8">
           <div className="mx-auto max-w-2xl rounded-xl border border-red-100 bg-white p-6 shadow-sm">
             <h1 className="text-xl font-bold text-[#641631]">系统加载失败，请刷新或联系管理员</h1>
-            <p className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{this.state.error?.message || String(this.state.error)}</p>
+            <p className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">错误信息：{this.state.error?.message || String(this.state.error)}</p>
+            <button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200">重新加载</button>
           </div>
         </div>
       )
@@ -418,7 +556,9 @@ function AppContent() {
   const [authLoading, setAuthLoading] = useState(true)
   const [active, setActive] = useState(() => routeToMenuKey[window.location.pathname] || 'dashboard')
   const [devUsername, setDevUsername] = useState(() => localStorage.getItem(devRoleStorageKey) || 'admin')
-  const cloud = useCloudData(session)
+  const cloudData = useCloudData(ENABLE_CLOUD_DATA ? session : null)
+  const localCloud = useLocalFallbackCloud()
+  const cloud = ENABLE_CLOUD_DATA ? cloudData : localCloud
 
   useEffect(() => {
     const storageKeys = [
@@ -449,6 +589,10 @@ function AppContent() {
   )
 
   useEffect(() => {
+    if (!ENABLE_CLOUD_DATA) {
+      setAuthLoading(false)
+      return undefined
+    }
     if (!supabase) {
       setAuthLoading(false)
       return
@@ -467,10 +611,10 @@ function AppContent() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
-  if (!isSupabaseConfigured) return <SetupMissing />
-  if (authLoading) return <LoadingScreen text="正在检查登录状态..." />
-  if (!session) return <LoginPage />
-  if (cloud.loading) return <LoadingScreen text="正在读取云端门店数据..." />
+  if (ENABLE_CLOUD_DATA && !isSupabaseConfigured) return <SetupMissing />
+  if (ENABLE_CLOUD_DATA && authLoading) return <LoadingScreen text="正在检查登录状态..." />
+  if (ENABLE_CLOUD_DATA && !session) return <LoginPage />
+  if (ENABLE_CLOUD_DATA && cloud.loading) return <LoadingScreen text="正在读取云端门店数据..." />
   if (!cloud.profile) return <AccountBlocked message={cloud.error || '当前账号未配置权限。'} />
 
   const realUser = currentUserFromProfile(cloud.profile)
@@ -585,7 +729,7 @@ function AppContent() {
             )}
             <div className="rounded-full border border-pink-100 bg-white px-5 py-2 text-sm font-semibold text-[#c2185b] shadow-sm">
               {headerStore} · 今日 {todayString()}
-              <button onClick={() => supabase.auth.signOut()} className="ml-4 text-[#8a4964] hover:text-[#c2185b]">退出</button>
+              {ENABLE_CLOUD_DATA && <button onClick={() => supabase.auth.signOut()} className="ml-4 text-[#8a4964] hover:text-[#c2185b]">退出</button>}
             </div>
           </div>
         </header>
@@ -2465,7 +2609,7 @@ function HandworkSettlementModule({ cashierOrders, stores, role, profile, cashie
 }
 
 function ProjectStandardLibraryModule({ projectCommissions, projectCommissionError, saveProjectCommission }) {
-  const projects = Array.isArray(projectCommissions) && projectCommissions.length ? projectCommissions : defaultProjectCommissions
+  const projects = Array.isArray(projectCommissions) && projectCommissions.length ? projectCommissions : localProjects()
   const [editing, setEditing] = useState(null)
   const [filters, setFilters] = useState({ category: '全部分类', search: '' })
   const [toast, setToast] = useState('')
