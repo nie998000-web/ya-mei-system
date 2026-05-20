@@ -1143,7 +1143,7 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
   )
 }
 
-function CustomersModule({ customers, stores, profile, role, customerError, saveCustomer, importCustomers: importCustomerRows, deleteCustomer }) {
+function CustomersModule({ customers, stores, storeRecords = [], profile, role, customerError, saveCustomer, importCustomers: importCustomerRows, deleteCustomer }) {
   const canChooseStore = isBossRole(role)
   const canEditCustomers = isBossRole(role) || String(role || '').trim() === 'manager'
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
