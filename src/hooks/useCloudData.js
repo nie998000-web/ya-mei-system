@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   stores as fixedStores,
@@ -344,6 +344,7 @@ export function useCloudData(session) {
   const [storeTargets, setStoreTargets] = useState([])
   const [storeNames, setStoreNames] = useState(fixedStores)
   const [storeRecords, setStoreRecords] = useState([])
+  const storeRecordsRef = useRef([])
   const [projectSource, setProjectSource] = useState('project_commission_settings')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -375,7 +376,11 @@ export function useCloudData(session) {
     return isBeauticianRole(profileData.role) ? scoped.eq('name', profileData.name) : scoped
   }
 
-  const loadCustomers = useCallback(async (profileData, activeStoreRows = storeRecords) => {
+  useEffect(() => {
+    storeRecordsRef.current = storeRecords
+  }, [storeRecords])
+
+  const loadCustomers = useCallback(async (profileData, activeStoreRows = storeRecordsRef.current) => {
     if (!profileData || !supabase) return false
     setCustomerError('')
 
@@ -423,7 +428,7 @@ export function useCloudData(session) {
       setCustomers([])
       return false
     }
-  }, [storeRecords])
+  }, [])
 
   const loadFollowups = useCallback(async (profileData) => {
     if (!profileData || !supabase) return false
@@ -460,7 +465,7 @@ export function useCloudData(session) {
     }
   }, [])
 
-  const loadEmployees = useCallback(async (profileData, activeStoreRows = storeRecords) => {
+  const loadEmployees = useCallback(async (profileData, activeStoreRows = storeRecordsRef.current) => {
     if (!supabase || !profileData) return false
     setEmployeeError('')
 
@@ -555,7 +560,7 @@ export function useCloudData(session) {
       setEmployees(fallbackEmployees(activeStoreRows))
       return false
     }
-  }, [storeRecords])
+  }, [])
 
   const loadDailyReviews = useCallback(async (profileData) => {
     if (!supabase || !profileData) return false

@@ -513,6 +513,43 @@ function useLocalFallbackCloud() {
   }
 }
 
+const cloudArrayKeys = [
+  'customers',
+  'employees',
+  'followups',
+  'reviews',
+  'performanceReports',
+  'performanceRecords',
+  'cashierOrders',
+  'projectCommissions',
+  'storeTargets',
+  'stores',
+  'storeRecords',
+]
+
+function safeCloudValue(cloudData, fallbackData, key) {
+  const value = cloudData?.[key]
+  if (!cloudArrayKeys.includes(key)) return value ?? fallbackData?.[key]
+  if (Array.isArray(value) && (!cloudData?.loading || value.length > 0)) return value
+  const fallbackValue = fallbackData?.[key]
+  return Array.isArray(fallbackValue) ? fallbackValue : []
+}
+
+function mergeCloudWithFallback(cloudData, fallbackData, useCloud) {
+  const source = useCloud ? cloudData : fallbackData
+  const safe = { ...(fallbackData || {}), ...(source || {}) }
+
+  cloudArrayKeys.forEach((key) => {
+    safe[key] = safeCloudValue(source, fallbackData, key)
+  })
+
+  safe.profile = source?.profile || fallbackData?.profile || { id: 'fallback-boss', name: '老板', role: 'boss', store: defaultStores[0], storeId: 1 }
+  safe.loading = false
+  safe.error = source?.error || (source?.loading ? '正在读取云端真实数据，当前页面先使用安全兜底数据。' : '')
+
+  return safe
+}
+
 class AppErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -558,7 +595,10 @@ function AppContent() {
   const [devUsername, setDevUsername] = useState(() => localStorage.getItem(devRoleStorageKey) || 'admin')
   const cloudData = useCloudData(ENABLE_CLOUD_DATA ? session : null)
   const localCloud = useLocalFallbackCloud()
-  const cloud = ENABLE_CLOUD_DATA ? cloudData : localCloud
+  const cloud = useMemo(
+    () => mergeCloudWithFallback(cloudData, localCloud, ENABLE_CLOUD_DATA),
+    [cloudData, localCloud],
+  )
 
   useEffect(() => {
     const storageKeys = [
@@ -598,23 +638,37 @@ function AppContent() {
       return
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setAuthLoading(false)
-    })
+    let mounted = true
+    const authTimeout = window.setTimeout(() => {
+      if (mounted) setAuthLoading(false)
+    }, 3000)
+
+    supabase.auth.getSession()
+      .then(({ data }) => {
+        if (!mounted) return
+        setSession(data.session)
+        setAuthLoading(false)
+      })
+      .catch((authError) => {
+        console.error('登录状态检查失败:', authError)
+        if (mounted) setAuthLoading(false)
+      })
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
       setAuthLoading(false)
     })
 
-    return () => listener.subscription.unsubscribe()
+    return () => {
+      mounted = false
+      window.clearTimeout(authTimeout)
+      listener.subscription.unsubscribe()
+    }
   }, [])
 
   if (ENABLE_CLOUD_DATA && !isSupabaseConfigured) return <SetupMissing />
   if (ENABLE_CLOUD_DATA && authLoading) return <LoadingScreen text="正在检查登录状态..." />
   if (ENABLE_CLOUD_DATA && !session) return <LoginPage />
-  if (ENABLE_CLOUD_DATA && cloud.loading) return <LoadingScreen text="正在读取云端门店数据..." />
   if (!cloud.profile) return <AccountBlocked message={cloud.error || '当前账号未配置权限。'} />
 
   const realUser = currentUserFromProfile(cloud.profile)
