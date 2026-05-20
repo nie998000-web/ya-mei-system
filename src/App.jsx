@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Component, useEffect, useMemo, useRef, useState } from 'react'
 import {
   followMethods,
   issueOptions,
@@ -376,7 +376,44 @@ const emptyEmployee = {
   note: '',
 }
 
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('系统运行时错误:', error, info)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-[#fff4f8] p-8">
+          <div className="mx-auto max-w-2xl rounded-xl border border-red-100 bg-white p-6 shadow-sm">
+            <h1 className="text-xl font-bold text-[#641631]">系统加载失败，请刷新或联系管理员</h1>
+            <p className="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{this.state.error?.message || String(this.state.error)}</p>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
+  )
+}
+
+function AppContent() {
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [active, setActive] = useState(() => routeToMenuKey[window.location.pathname] || 'dashboard')
