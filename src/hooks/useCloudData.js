@@ -62,6 +62,7 @@ function isValidRole(role) {
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
 const customerSelectFields = 'id,name,phone,age,birthday,store_id,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
+const customerLegacySelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
 const employeeSelectFields = 'id,name,phone,store_id,store,role,note,entry_date,is_active,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
@@ -209,6 +210,16 @@ function customerSchemaError(error) {
   return message
 }
 
+function isMissingColumnError(error, columnName) {
+  const message = String(error?.message || error?.details || '').toLowerCase()
+  return message.includes(columnName.toLowerCase()) && /does not exist|schema cache|could not find|column/.test(message)
+}
+
+function withoutStoreId(payload) {
+  const { store_id, ...rest } = payload
+  return rest
+}
+
 export function canManage(role, area) {
   if (isBossRole(role)) return true
   if (isManagerRole(role)) return area !== 'system'
@@ -263,18 +274,31 @@ export function useCloudData(session) {
     if (!profileData || !supabase) return false
     setCustomerError('')
 
-    try {
+    const runCustomerQuery = async ({ useStoreId }) => {
       let query = supabase
         .from('customers')
-        .select(customerSelectFields)
+        .select(useStoreId ? customerSelectFields : customerLegacySelectFields)
         .order('name', { ascending: true })
 
       if (shouldFilterByStore(profileData)) {
-        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
+        query = useStoreId && isUuid(profileData.storeId)
+          ? query.eq('store_id', profileData.storeId)
+          : query.eq('store', profileStore(profileData))
       }
       if (isBeauticianRole(profileData.role) && profileData.name) query = query.eq('owner', profileData.name)
+      return query
+    }
 
-      const { data, error: customersError } = await query
+    try {
+      let { data, error: customersError } = await runCustomerQuery({ useStoreId: true })
+
+      if (customersError && isMissingColumnError(customersError, 'store_id')) {
+        console.warn('customers.store_id 不存在，临时按 customers.store 读取。请执行 supabase/customers_store_id_uuid.sql 完成字段统一。', customersError)
+        const fallback = await runCustomerQuery({ useStoreId: false })
+        data = fallback.data
+        customersError = fallback.error
+      }
+
       if (customersError) {
         const message = errorMessage(customersError)
         console.error('customers 查询失败:', customersError)
@@ -818,10 +842,14 @@ export function useCloudData(session) {
       level: row.level || '',
       last_visit: row.lastVisit || null,
     }
-    const request = row.id
-      ? supabase.from('customers').update(payload).eq('id', row.id).select(customerSelectFields).single()
-      : supabase.from('customers').insert([payload]).select(customerSelectFields).single()
-    const { data, error: saveError } = await request
+    const saveRequest = (nextPayload, selectFields) => row.id
+      ? supabase.from('customers').update(nextPayload).eq('id', row.id).select(selectFields).single()
+      : supabase.from('customers').insert([nextPayload]).select(selectFields).single()
+    let { data, error: saveError } = await saveRequest(payload, customerSelectFields)
+    if (saveError && isMissingColumnError(saveError, 'store_id')) {
+      console.warn('customers.store_id 不存在，顾客保存临时不写 store_id。请执行 supabase/customers_store_id_uuid.sql。', saveError)
+      ;({ data, error: saveError } = await saveRequest(withoutStoreId(payload), customerLegacySelectFields))
+    }
     if (saveError) throw new Error(customerSchemaError(saveError))
     if ((payload.owner || '') !== (data?.owner || '')) {
       throw new Error(`顾客负责人保存失败：提交为「${payload.owner || '空'}」，云端返回为「${data?.owner || '空'}」。请检查 customers.owner 字段和 RLS。`)
@@ -871,17 +899,28 @@ export function useCloudData(session) {
 
     for (const row of updateRows) {
       const { id, ...payload } = row
-      const { error: updateError } = await supabase
+      let { error: updateError } = await supabase
         .from('customers')
         .update(payload)
         .eq('id', id)
+      if (updateError && isMissingColumnError(updateError, 'store_id')) {
+        ;({ error: updateError } = await supabase
+          .from('customers')
+          .update(withoutStoreId(payload))
+          .eq('id', id))
+      }
       if (updateError) throw new Error(customerSchemaError(updateError))
     }
 
     if (insertRows.length > 0) {
-      const { error: insertError } = await supabase
+      let { error: insertError } = await supabase
         .from('customers')
         .insert(insertRows)
+      if (insertError && isMissingColumnError(insertError, 'store_id')) {
+        ;({ error: insertError } = await supabase
+          .from('customers')
+          .insert(insertRows.map(withoutStoreId)))
+      }
       if (insertError) throw new Error(customerSchemaError(insertError))
     }
 
