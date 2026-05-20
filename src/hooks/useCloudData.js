@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   stores as fixedStores,
 } from '../data/seedData'
-import { defaultProjectCommissions } from '../data/salarySeedData'
+import { cashierSeedProjects, defaultProjectCommissions } from '../data/salarySeedData'
 import {
   fromCustomer,
   fromCashierOrder,
@@ -22,6 +22,7 @@ import {
   toCashierOrderItem,
   toFollowup,
   toProjectCommission,
+  toProjectStandard,
   toReview,
   toStoreTarget,
 } from '../lib/mappers'
@@ -60,8 +61,8 @@ function isValidRole(role) {
 
 const customerRequiredFields = ['name', 'phone', 'birthday', 'store', 'owner', 'level', 'last_visit']
 const profileSelectFields = 'id,user_id,name,role,store,created_at'
-const customerSelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
-const employeeSelectFields = 'id,name,phone,store,role,note,entry_date,is_active,created_at,updated_at'
+const customerSelectFields = 'id,name,phone,age,birthday,store_id,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
+const employeeSelectFields = 'id,name,phone,store_id,store,role,note,entry_date,is_active,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
 const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,remark,created_at,updated_at'
@@ -71,6 +72,7 @@ const projectCommissionSelectFields = 'id,project_name,category,manual_commissio
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
 const followupSelectFields = 'id,customer_id,customer_name,customer_phone,owner,feedback,content,issue_type,has_appointment,appointment_time,has_deal,deal_amount,next_follow_time,created_at,method,store'
 const reviewSelectFields = 'id,date,store,invite_rate,appointment_rate,arrival_rate,deal_rate,deal_amount,unfinished_reason,tomorrow_action,created_at'
+const projectStandardSelectFields = '*'
 
 function shouldFilterByStore(profileData) {
   if (!profileData) return false
@@ -112,11 +114,12 @@ function mergeTodayStats(employees, stats) {
   })
 }
 
-function defaultEmployeesForStore(store) {
+function defaultEmployeesForStore(store, storeId) {
   return [
     {
       name: `${store}店长`,
       phone: '',
+      store_id: storeId,
       store,
       role: 'manager',
       note: '系统初始化默认店长，可在员工管理中修改',
@@ -127,6 +130,7 @@ function defaultEmployeesForStore(store) {
     {
       name: `${store}顾问`,
       phone: '',
+      store_id: storeId,
       store,
       role: 'consultant',
       note: '系统初始化默认顾问，可在员工管理中修改',
@@ -134,8 +138,60 @@ function defaultEmployeesForStore(store) {
       is_active: true,
       updated_at: new Date().toISOString(),
     },
+    {
+      name: `${store}美容师`,
+      phone: '',
+      store_id: storeId,
+      store,
+      role: 'beautician',
+      note: '系统初始化默认美容师，可在员工管理中修改',
+      entry_date: null,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    },
   ]
 }
+
+function storeByIdFromRows(rows) {
+  return new Map((rows || []).filter((store) => store?.id).map((store) => [String(store.id), store.name]))
+}
+
+function storeIdByNameFromRows(rows, name) {
+  const normalizedName = normalizeStoreName(name)
+  return (rows || []).find((store) => normalizeStoreName(store.name) === normalizedName)?.id || ''
+}
+
+async function ensureFixedStores() {
+  const { data, error } = await supabase.from('stores').select('id,name').order('name', { ascending: true })
+  if (error) return { data: [], error }
+
+  let rows = data || []
+  const names = new Set(rows.map((store) => normalizeStoreName(store.name)).filter(Boolean))
+  const missingStores = fixedStores.filter((name) => !names.has(name))
+  if (missingStores.length > 0) {
+    const { error: insertError } = await supabase
+      .from('stores')
+      .insert(missingStores.map((name) => ({ name })))
+    if (insertError) return { data: rows, error: insertError }
+
+    const refreshed = await supabase.from('stores').select('id,name').order('name', { ascending: true })
+    if (refreshed.error) return { data: rows, error: refreshed.error }
+    rows = refreshed.data || []
+  }
+
+  return { data: rows, error: null }
+}
+
+async function ensureStoreBoundMasterData(rows) {
+  const validRows = (rows || []).filter((store) => isUuid(store.id) && fixedStores.includes(normalizeStoreName(store.name)))
+  await Promise.all(validRows.flatMap((store) => [
+    supabase.from('customers').update({ store_id: store.id, store: normalizeStoreName(store.name) }).eq('store', normalizeStoreName(store.name)).is('store_id', null),
+    supabase.from('employees').update({ store_id: store.id, store: normalizeStoreName(store.name) }).eq('store', normalizeStoreName(store.name)).is('store_id', null),
+  ])).catch((bindingError) => {
+    console.warn('主数据 store_id 绑定补齐失败:', bindingError)
+  })
+}
+
 
 function errorMessage(error, fallback = '云端数据操作失败') {
   return error?.message || error?.details || error?.hint || fallback
@@ -171,6 +227,8 @@ export function useCloudData(session) {
   const [projectCommissions, setProjectCommissions] = useState([])
   const [storeTargets, setStoreTargets] = useState([])
   const [storeNames, setStoreNames] = useState(fixedStores)
+  const [storeRecords, setStoreRecords] = useState([])
+  const [projectSource, setProjectSource] = useState('project_commission_settings')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [customerError, setCustomerError] = useState('')
@@ -201,7 +259,7 @@ export function useCloudData(session) {
     return isBeauticianRole(profileData.role) ? scoped.eq('name', profileData.name) : scoped
   }
 
-  const loadCustomers = useCallback(async (profileData) => {
+  const loadCustomers = useCallback(async (profileData, activeStoreRows = storeRecords) => {
     if (!profileData || !supabase) return false
     setCustomerError('')
 
@@ -211,7 +269,9 @@ export function useCloudData(session) {
         .select(customerSelectFields)
         .order('name', { ascending: true })
 
-      if (shouldFilterByStore(profileData)) query = query.eq('store', profileStore(profileData))
+      if (shouldFilterByStore(profileData)) {
+        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
+      }
       if (isBeauticianRole(profileData.role) && profileData.name) query = query.eq('owner', profileData.name)
 
       const { data, error: customersError } = await query
@@ -224,7 +284,8 @@ export function useCloudData(session) {
         return false
       }
 
-      setCustomers((data || []).map(fromCustomer))
+      const storeById = storeByIdFromRows(activeStoreRows)
+      setCustomers((data || []).map((row) => fromCustomer(row, storeById)))
       return true
     } catch (customersError) {
       const message = errorMessage(customersError)
@@ -234,7 +295,7 @@ export function useCloudData(session) {
       setCustomers([])
       return false
     }
-  }, [])
+  }, [storeRecords])
 
   const loadFollowups = useCallback(async (profileData) => {
     if (!profileData || !supabase) return false
@@ -271,7 +332,7 @@ export function useCloudData(session) {
     }
   }, [])
 
-  const loadEmployees = useCallback(async (profileData) => {
+  const loadEmployees = useCallback(async (profileData, activeStoreRows = storeRecords) => {
     if (!supabase || !profileData) return false
     setEmployeeError('')
 
@@ -280,7 +341,9 @@ export function useCloudData(session) {
         .from('employees')
         .select(employeeSelectFields)
 
-      if (!isBossRole(profileData.role)) query = query.eq('store', profileStore(profileData))
+      if (!isBossRole(profileData.role)) {
+        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
+      }
       if (isBeauticianRole(profileData.role) && profileData.name) query = query.eq('name', profileData.name)
 
       const { data, error: employeesError } = await query
@@ -294,14 +357,18 @@ export function useCloudData(session) {
         return false
       }
 
-      let mappedEmployees = (data || []).map(fromEmployee)
-      const seedStores = isBossRole(profileData.role) ? fixedStores : [profileStore(profileData)]
-      const seedPayloads = seedStores.flatMap((store) => {
-        const storeEmployees = mappedEmployees.filter((item) => normalizeStoreName(item.store) === store)
+      const storeById = storeByIdFromRows(activeStoreRows)
+      let mappedEmployees = (data || []).map((row) => fromEmployee(row, storeById))
+      const seedStores = (isBossRole(profileData.role) ? activeStoreRows : activeStoreRows.filter((store) => String(store.id) === String(profileData.storeId)))
+        .filter((store) => isUuid(store.id) && fixedStores.includes(normalizeStoreName(store.name)))
+      const seedPayloads = seedStores.flatMap((storeRow) => {
+        const store = normalizeStoreName(storeRow.name)
+        const storeEmployees = mappedEmployees.filter((item) => String(item.storeId) === String(storeRow.id))
         const hasManager = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'manager')
         const hasConsultant = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'consultant')
-        return defaultEmployeesForStore(store).filter((item) => (
-          (item.role === 'manager' && !hasManager) || (item.role === 'consultant' && !hasConsultant)
+        const hasBeautician = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'beautician')
+        return defaultEmployeesForStore(store, storeRow.id).filter((item) => (
+          (item.role === 'manager' && !hasManager) || (item.role === 'consultant' && !hasConsultant) || (item.role === 'beautician' && !hasBeautician)
         ))
       })
 
@@ -314,7 +381,7 @@ export function useCloudData(session) {
           console.error('employees 初始化默认员工失败:', seedError)
           setEmployeeError(errorMessage(seedError))
         } else {
-          mappedEmployees = [...mappedEmployees, ...(seededEmployees || []).map(fromEmployee)]
+          mappedEmployees = [...mappedEmployees, ...(seededEmployees || []).map((row) => fromEmployee(row, storeById))]
         }
       }
 
@@ -348,7 +415,7 @@ export function useCloudData(session) {
       setEmployees([])
       return false
     }
-  }, [])
+  }, [storeRecords])
 
   const loadDailyReviews = useCallback(async (profileData) => {
     if (!supabase || !profileData) return false
@@ -473,7 +540,9 @@ export function useCloudData(session) {
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
 
-      if (!isBossRole(profileData.role)) query = query.eq('store_name', profileStore(profileData))
+      if (!isBossRole(profileData.role)) {
+        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
+      }
       if (isBeauticianRole(profileData.role) && profileData.name) {
         query = query.or(`service_employee_name.eq.${profileData.name},sales_employee_name.eq.${profileData.name},consultant_name.eq.${profileData.name}`)
       }
@@ -531,6 +600,32 @@ export function useCloudData(session) {
     setProjectCommissionError('')
 
     try {
+      const { data: standardRows, error: standardError } = await supabase
+        .from('projects')
+        .select(projectStandardSelectFields)
+        .order('project_name', { ascending: true })
+
+      if (!standardError) {
+        setProjectSource('projects')
+        let projectRows = standardRows || []
+        if (projectRows.length === 0) {
+          const { data: seededProjects, error: seedError } = await supabase
+            .from('projects')
+            .insert(cashierSeedProjects.map((item) => toProjectStandard(item)))
+            .select(projectStandardSelectFields)
+          if (seedError) {
+            console.error('projects 初始化默认项目失败:', seedError)
+            setProjectCommissionError(errorMessage(seedError))
+          } else {
+            projectRows = seededProjects || []
+          }
+        }
+        setProjectCommissions(projectRows.map(fromProjectCommission))
+        return true
+      }
+
+      console.warn('projects 查询失败，尝试旧项目表 project_commission_settings:', standardError)
+      setProjectSource('project_commission_settings')
       const { data, error: projectsError } = await supabase
         .from('project_commission_settings')
         .select(projectCommissionSelectFields)
@@ -546,7 +641,7 @@ export function useCloudData(session) {
 
       let projectRows = data || []
       if (projectRows.length === 0) {
-        const seedPayloads = defaultProjectCommissions.map((item) => toProjectCommission(item))
+        const seedPayloads = cashierSeedProjects.map((item) => toProjectCommission(item))
         const { data: seededProjects, error: seedError } = await supabase
           .from('project_commission_settings')
           .insert(seedPayloads)
@@ -563,7 +658,7 @@ export function useCloudData(session) {
       return true
     } catch (projectsError) {
       const message = errorMessage(projectsError)
-      console.error('project_commission_settings 查询异常:', projectsError)
+      console.error('项目标准库查询异常:', projectsError)
       setProjectCommissionError(message)
       setProjectCommissions([])
       return false
@@ -664,31 +759,35 @@ export function useCloudData(session) {
         return
       }
 
-      setProfile(activeProfile)
-
-      const [storesRes] = await Promise.all([
-        supabase.from('stores').select('id,name').order('id', { ascending: true }),
-      ])
+      const storesRes = await ensureFixedStores()
 
       const errors = []
       if (storesRes.error) {
-        console.error('stores 查询失败:', storesRes.error)
+        console.error('stores 查询/初始化失败:', storesRes.error)
         errors.push(`stores：${errorMessage(storesRes.error)}`)
       }
 
-      const namesFromDb = storesRes.error ? [] : (storesRes.data || []).map((store) => store.name)
+      const activeStoreRows = storesRes.error ? [] : (storesRes.data || [])
+      const activeProfileWithStore = {
+        ...activeProfile,
+        storeId: storeIdByNameFromRows(activeStoreRows, activeProfile.store),
+      }
+      setProfile(activeProfileWithStore)
+      setStoreRecords(activeStoreRows)
+      const namesFromDb = activeStoreRows.map((store) => store.name)
       setStoreNames(normalizeStoreNames(namesFromDb))
+      await ensureStoreBoundMasterData(activeStoreRows)
 
       const [customersOk, followupsOk, employeesOk, dailyReviewsOk, performanceReportsOk, performanceRecordsOk, cashierOrdersOk, projectCommissionsOk, storeTargetsOk] = await Promise.all([
-        loadCustomers(activeProfile),
-        loadFollowups(activeProfile),
-        loadEmployees(activeProfile),
-        loadDailyReviews(activeProfile),
-        loadPerformanceReports(activeProfile),
-        loadPerformanceRecords(activeProfile),
-        loadCashierOrders(activeProfile),
+        loadCustomers(activeProfileWithStore, activeStoreRows),
+        loadFollowups(activeProfileWithStore),
+        loadEmployees(activeProfileWithStore, activeStoreRows),
+        loadDailyReviews(activeProfileWithStore),
+        loadPerformanceReports(activeProfileWithStore),
+        loadPerformanceRecords(activeProfileWithStore),
+        loadCashierOrders(activeProfileWithStore),
         loadProjectCommissions(),
-        loadStoreTargets(activeProfile),
+        loadStoreTargets(activeProfileWithStore),
       ])
       if (errors.length || !customersOk || !followupsOk || !employeesOk || !dailyReviewsOk || !performanceReportsOk || !performanceRecordsOk || !cashierOrdersOk || !projectCommissionsOk || !storeTargetsOk) {
         setError((current) => [current, ...errors].filter(Boolean).join('；'))
@@ -713,6 +812,7 @@ export function useCloudData(session) {
       phone: row.phone || '',
       age: row.age === '' || row.age == null ? null : Number(row.age),
       birthday: row.birthday || null,
+      store_id: storeIdByNameFromRows(storeRecords, storeName) || profile?.storeId || null,
       store: storeName,
       owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
       level: row.level || '',
@@ -727,23 +827,27 @@ export function useCloudData(session) {
       throw new Error(`顾客负责人保存失败：提交为「${payload.owner || '空'}」，云端返回为「${data?.owner || '空'}」。请检查 customers.owner 字段和 RLS。`)
     }
     if (data) {
-      const mapped = fromCustomer(data)
+      const mapped = fromCustomer(data, storeByIdFromRows(storeRecords))
       setCustomers((list) => (row.id ? list.map((item) => (item.id === row.id ? mapped : item)) : [mapped, ...list]))
     }
     await loadCustomers(profile)
   }
 
   const importCustomers = async (rows) => {
-    const normalizedRows = (rows || []).map((row) => ({
+    const normalizedRows = (rows || []).map((row) => {
+      const storeName = writeStoreForProfile(row.store, profile)
+      return {
       name: row.name || '',
       phone: String(row.phone || '').trim(),
       age: row.age === '' || row.age == null ? null : Number(row.age),
       birthday: row.birthday || null,
-      store: writeStoreForProfile(row.store, profile),
+      store_id: storeIdByNameFromRows(storeRecords, storeName) || profile?.storeId || null,
+      store: storeName,
       owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
       level: row.level || '',
       last_visit: row.lastVisit || null,
-    }))
+    }
+    })
     const skippedBlankPhone = normalizedRows.filter((row) => !row.phone).length
     const rowsWithPhone = normalizedRows.filter((row) => row.phone)
 
@@ -985,10 +1089,14 @@ export function useCloudData(session) {
   }
 
   const saveProjectCommission = async (row) => {
-    const payload = toProjectCommission(row)
-    const request = row.id && !String(row.id).startsWith('preset-')
-      ? supabase.from('project_commission_settings').update(payload).eq('id', row.id).select(projectCommissionSelectFields).single()
-      : supabase.from('project_commission_settings').insert(payload).select(projectCommissionSelectFields).single()
+    const isStandardProject = projectSource === 'projects'
+    const payload = isStandardProject ? toProjectStandard(row) : toProjectCommission(row)
+    const tableName = isStandardProject ? 'projects' : 'project_commission_settings'
+    const selectFields = isStandardProject ? projectStandardSelectFields : projectCommissionSelectFields
+    const canUpdate = row.id && !String(row.id).startsWith('preset-') && !String(row.id).startsWith('seed-')
+    const request = canUpdate
+      ? supabase.from(tableName).update(payload).eq('id', row.id).select(selectFields).single()
+      : supabase.from(tableName).insert(payload).select(selectFields).single()
     const { data, error: saveError } = await request
     if (saveError) throw new Error(errorMessage(saveError))
     if (data) {
@@ -1004,7 +1112,8 @@ export function useCloudData(session) {
   const saveEmployee = async (row) => {
     const storeName = writeStoreForProfile(row.store, profile)
     const employeePayload = {
-      ...toEmployee(row, profile),
+      ...toEmployee({ ...row, storeId: storeIdByNameFromRows(storeRecords, storeName) || row.storeId }, profile),
+      store_id: storeIdByNameFromRows(storeRecords, storeName) || row.storeId || profile?.storeId || null,
       store: storeName,
     }
     const { data, error: saveError } = row.id
@@ -1052,6 +1161,7 @@ export function useCloudData(session) {
     role,
     roleLevel: roleRank[role] || 1,
     stores,
+    storeRecords,
     customers,
     employees,
     followups,

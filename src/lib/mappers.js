@@ -26,8 +26,9 @@ function uuidOrNull(value) {
   return isUuid(value) ? String(value).trim() : null
 }
 
-export function fromCustomer(row) {
-  const storeName = normalizeStoreName(row.store) || validStoreNames[0]
+export function fromCustomer(row, storeById = new Map()) {
+  const storeId = row.store_id || row.storeId || ''
+  const storeName = normalizeStoreName(storeById.get(String(storeId)) || row.store) || validStoreNames[0]
   return {
     id: row.id,
     name: String(row.name ?? ''),
@@ -35,6 +36,7 @@ export function fromCustomer(row) {
     age: row.age ?? '',
     birthday: row.birthday ?? '',
     isNewCustomer: Boolean(row.is_new_customer),
+    storeId,
     store: storeName,
     owner: String(row.owner ?? ''),
     level: String(row.level || ''),
@@ -48,12 +50,14 @@ export function fromCustomer(row) {
   }
 }
 
-export function fromEmployee(row) {
+export function fromEmployee(row, storeById = new Map()) {
+  const storeId = row.store_id || row.storeId || ''
   return {
     id: row.id,
     name: row.name || '',
     phone: row.phone || '',
-    store: row.store || '',
+    storeId,
+    store: normalizeStoreName(storeById.get(String(storeId)) || row.store) || row.store || '',
     role: row.role || 'beautician',
     entryDate: row.entry_date || '',
     isActive: row.is_active !== false,
@@ -73,6 +77,7 @@ export function toEmployee(row, profile) {
   return {
     name: row.name || '',
     phone: row.phone || '',
+    store_id: uuidOrNull(row.storeId || profile?.storeId),
     store: normalizeStoreForWrite(row.store, profile?.store),
     role: row.role || 'beautician',
     note: row.note || '',
@@ -255,18 +260,18 @@ export function fromProjectCommission(row) {
   }
   return {
     id: row.id,
-    projectName: row.project_name || '',
+    projectName: row.project_name || row.name || '',
     category: row.category || 'other',
-    defaultPrice: Number(config.defaultPrice || 0),
-    manualCommission: Number(row.manual_commission || config.manualCommission || 0),
+    defaultPrice: Number(row.default_price ?? config.defaultPrice ?? 0),
+    manualCommission: Number(row.fixed_manual_commission ?? row.manual_commission ?? config.manualCommission ?? 0),
     durationMinutes: row.duration_minutes ?? '',
     unit: row.unit || '次',
-    isCardConsumption: Boolean(config.isCardConsumption),
-    isHighEnd: Boolean(config.isHighEnd),
-    includeSaleCommission: config.includeSaleCommission !== false,
-    includeManualCommission: config.includeManualCommission !== false,
-    defaultPerformanceType: config.defaultPerformanceType || '售前',
-    isActive: row.is_active !== false,
+    isCardConsumption: row.is_card_consumption ?? config.isCardConsumption ?? false,
+    isHighEnd: row.is_high_end ?? config.isHighEnd ?? false,
+    includeSaleCommission: row.include_sale_commission ?? config.includeSaleCommission ?? true,
+    includeManualCommission: row.include_manual_commission ?? config.includeManualCommission ?? true,
+    defaultPerformanceType: row.default_performance_type || config.defaultPerformanceType || '售前',
+    isActive: (row.is_enabled ?? row.is_active) !== false,
     remark: remarkText,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -291,6 +296,25 @@ export function toProjectCommission(row) {
     unit: row.unit || '次',
     is_active: row.isActive !== false,
     remark: JSON.stringify(remarkConfig),
+    updated_at: new Date().toISOString(),
+  }
+}
+
+export function toProjectStandard(row) {
+  return {
+    project_name: row.projectName || '',
+    category: row.category || 'other',
+    default_price: Number(row.defaultPrice || 0),
+    fixed_manual_commission: Number(row.manualCommission || 0),
+    duration_minutes: row.durationMinutes === '' || row.durationMinutes == null ? null : Number(row.durationMinutes),
+    unit: row.unit || '次',
+    is_card_consumption: Boolean(row.isCardConsumption),
+    is_high_end: Boolean(row.isHighEnd),
+    include_sale_commission: row.includeSaleCommission !== false,
+    include_manual_commission: row.includeManualCommission !== false,
+    default_performance_type: row.defaultPerformanceType || '售前',
+    is_enabled: row.isActive !== false,
+    remark: row.remark || '',
     updated_at: new Date().toISOString(),
   }
 }

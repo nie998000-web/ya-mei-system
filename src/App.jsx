@@ -51,6 +51,7 @@ function roleLabel(role) {
     regional_manager: '区域经理',
     technical_teacher: '技术老师',
     reception: '前台',
+    front_desk: '前台',
   }
   return labels[role] || role || ''
 }
@@ -67,7 +68,7 @@ function normalizeStaffRole(role) {
     总监: 'director',
     管理员: 'admin',
     区域经理: 'regional_manager',
-    前台: 'reception',
+    前台: 'front_desk',
   }
   return roleMap[role] || roleMap[String(role || '').trim()] || value
 }
@@ -157,7 +158,7 @@ const staffRoleOptions = [
   ['director', '总监'],
   ['regional_manager', '区域经理'],
   ['technical_teacher', '技术老师'],
-  ['reception', '前台'],
+  ['front_desk', '前台'],
   ['admin', '管理员'],
 ]
 
@@ -463,6 +464,7 @@ function App() {
     currentUser,
     role: currentUser.role,
     stores: validStoreNames,
+    storeRecords: cloud.storeRecords || [],
     customerError: cloud.customerError,
     followupError: cloud.followupError,
     employeeError: cloud.employeeError,
@@ -1175,6 +1177,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
         <CustomerDrawer
           data={editing}
           stores={stores}
+          storeRecords={storeRecords || []}
           profile={profile}
           lockedStore={!canChooseStore}
           lockedStoreValue={fixedStore}
@@ -1669,7 +1672,7 @@ function FollowupsModule({ followups, customers, employees, stores, profile, rol
   )
 }
 
-function CashierModule({ cashierOrders, customers, employees, projectCommissions, stores, profile, role, cashierOrderError, saveCashierOrder, voidCashierOrder, setActive }) {
+function CashierModule({ cashierOrders, customers, employees, projectCommissions, stores, storeRecords, profile, role, cashierOrderError, saveCashierOrder, voidCashierOrder, setActive }) {
   const isBoss = isBossRole(role)
   const isStaff = isBeauticianRole(role)
   const canChooseStore = isBoss
@@ -1724,6 +1727,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
       orderNo: generateOrderNo(todayString()),
       date: todayString(),
       storeName: fixedStore || stores[0] || defaultStores[0],
+      storeId: (storeRecords || []).find((store) => normalizeStoreName(store.name) === normalizeStoreName(fixedStore || stores[0] || defaultStores[0]))?.id || '',
       serviceEmployeeName: isStaff ? profile?.name || '' : '',
       salesEmployeeName: isStaff ? profile?.name || '' : '',
     })
@@ -1858,6 +1862,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
           employees={activeEmployeeOptions}
           projects={activeProjectOptions}
           stores={stores}
+          storeRecords={storeRecords || []}
           profile={profile}
           lockedStore={!canChooseStore}
           lockedStoreValue={fixedStore}
@@ -2783,13 +2788,15 @@ function ProjectStandardDrawer({ data, onClose, onSave }) {
   )
 }
 
-function CashierDrawer({ data, customers, employees, projects, stores, profile, lockedStore, lockedStoreValue, onClose, onSave }) {
+function CashierDrawer({ data, customers, employees, projects, stores, storeRecords = [], profile, lockedStore, lockedStoreValue, onClose, onSave }) {
   const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || normalizeStoreName(profile?.store) || data.storeName : data.storeName
+  const storeIdByName = (name) => (storeRecords || []).find((store) => normalizeStoreName(store.name) === normalizeStoreName(name))?.id || ''
   const initialItems = cashierOrderItems(data)
   const [form, setForm] = useState({
     ...data,
     orderNo: data.orderNo || generateOrderNo(data.date || todayString()),
     storeName: fixedStore,
+    storeId: data.storeId || storeIdByName(fixedStore),
     performanceType: orderPerformanceType(data),
     remark: remarkWithoutPerformanceType(data.remark),
     orderItems: initialItems.length ? initialItems : [{
@@ -2811,18 +2818,20 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const [showCustomerResults, setShowCustomerResults] = useState(false)
   const [validationError, setValidationError] = useState('')
   const selectedStoreName = normalizeStoreName(form.storeName)
+  const currentStoreId = form.storeId || storeIdByName(selectedStoreName)
+  const recordBelongsToCurrentStore = (record) => isUuid(currentStoreId) && String(record.storeId || record.store_id || '') === String(currentStoreId)
   const staffInStore = employees
-    .filter((item) => !selectedStoreName || normalizeStoreName(item.store) === selectedStoreName)
+    .filter((item) => recordBelongsToCurrentStore(item))
   const staffOptionsByRoles = (roles) => staffInStore
     .filter((item) => isUuid(item.id))
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
   const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
-  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'director', 'admin', 'regional_manager', 'reception'])
+  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'front_desk'])
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
   const storeCustomers = customers
-    .filter((customer) => isUuid(customer.id) && normalizeRecordStore(customer) === selectedStoreName)
+    .filter((customer) => isUuid(customer.id) && recordBelongsToCurrentStore(customer))
     .sort((a, b) => String(b.lastVisit || b.createdAt || '').localeCompare(String(a.lastVisit || a.createdAt || '')))
   const customerResults = storeCustomers
     .filter((item) => {
@@ -2858,6 +2867,13 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     && isUuid(form.salesEmployeeId)
     && (!form.consultantId || isUuid(form.consultantId)),
   )
+  useEffect(() => {
+    console.log('currentStoreId', currentStoreId)
+    console.log('stores', storeRecords)
+    console.log('projects', projects)
+    console.log('employees', employees)
+    console.log('customers', customers)
+  }, [currentStoreId, storeRecords, projects, employees, customers])
   const chooseCustomer = (customer) => {
     setForm({
       ...form,
@@ -2865,6 +2881,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       customerName: customer?.name || '',
       customerPhone: customer?.phone || '',
       storeName: form.storeName,
+      storeId: currentStoreId,
     })
     setCustomerSearch(customer ? `${customer.name} ${customer.phone || ''}` : '')
     setShowCustomerResults(false)
@@ -2874,7 +2891,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     chooseCustomer(customer || null)
   }
   const changeStore = (value) => {
-    setForm({ ...form, storeName: value, customerId: '', customerName: '', customerPhone: '' })
+    setForm({ ...form, storeName: value, storeId: storeIdByName(value), customerId: '', customerName: '', customerPhone: '' })
     setCustomerSearch('')
     setShowCustomerResults(false)
   }
@@ -2949,11 +2966,11 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('请先选择顾客')
       throw new Error('请先选择顾客')
     }
-    if (!selectedCustomer || normalizeRecordStore(selectedCustomer) !== selectedStoreName) {
+    if (!selectedCustomer || !recordBelongsToCurrentStore(selectedCustomer)) {
       setValidationError('顾客不属于当前门店，请重新选择顾客')
       throw new Error('顾客不属于当前门店，请重新选择顾客')
     }
-    if (!isUuid(form.customerId) || (form.storeId && !isUuid(form.storeId))) {
+    if (!isUuid(form.customerId) || !isUuid(currentStoreId)) {
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
@@ -2997,7 +3014,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
-    return onSave({ ...form, orderItems, ...totals, remark: remarkWithPerformanceType(form.performanceType, form.remark) })
+    return onSave({ ...form, storeId: currentStoreId, orderItems, ...totals, remark: remarkWithPerformanceType(form.performanceType, form.remark) })
   }
 
   return (

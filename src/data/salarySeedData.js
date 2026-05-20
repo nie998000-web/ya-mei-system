@@ -71,6 +71,14 @@ export const defaultProjectCommissions = [
   ...item,
 }))
 
+export const cashierSeedProjects = [
+  { projectName: '肩颈疏通', category: 'body', defaultPrice: 398, manualCommission: 30, durationMinutes: 60, unit: '次', isCardConsumption: true, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, defaultPerformanceType: '售前', isActive: true, remark: '' },
+  { projectName: '淋巴', category: 'body', defaultPrice: 298, manualCommission: 20, durationMinutes: 45, unit: '次', isCardConsumption: true, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, defaultPerformanceType: '售前', isActive: true, remark: '' },
+  { projectName: '艾灸', category: 'material', defaultPrice: 68, manualCommission: 0.5, durationMinutes: 20, unit: '个', isCardConsumption: true, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, defaultPerformanceType: '消耗', isActive: true, remark: '' },
+  { projectName: '泥灸', category: 'material', defaultPrice: 98, manualCommission: 1, durationMinutes: 30, unit: '张', isCardConsumption: true, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, defaultPerformanceType: '消耗', isActive: true, remark: '' },
+  { projectName: '面部补水', category: 'face', defaultPrice: 198, manualCommission: 20, durationMinutes: 45, unit: '次', isCardConsumption: true, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, defaultPerformanceType: '售前', isActive: true, remark: '' },
+].map((item, index) => ({ id: `seed-project-${index + 1}`, ...item }))
+
 const managerNames = ['刘店长', '王店长', '周店长', '何店长']
 const beauticianNames = [
   ['林娜', '胡语', '张倩', '小王'],
