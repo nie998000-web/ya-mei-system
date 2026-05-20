@@ -69,8 +69,41 @@ function normalizeStaffRole(role) {
   return roleMap[role] || roleMap[String(role || '').trim()] || value
 }
 
+const FOLLOWUP_STAFF_ROLES = [
+  'manager',
+  'beautician',
+  'consultant',
+  'technical_teacher',
+  'boss',
+  'admin',
+]
+
+function employeeRoleOf(employee) {
+  return normalizeStaffRole(employee?.role || employee?.staff_role || employee?.position || employee?.job_title)
+}
+
+function employeeStoreOf(employee) {
+  return normalizeRecordStore(employee) || normalizeStoreName(employee?.store)
+}
+
+function followupOwnerOf(record) {
+  return record?.owner || record?.followupBy || record?.followup_by || record?.createdBy || record?.created_by || record?.staffName || ''
+}
+
+function followupMethodOf(record) {
+  return record?.followupMethod || record?.followup_method || record?.method || ''
+}
+
+function followupContentOf(record) {
+  return record?.content || record?.note || record?.remark || record?.feedback || ''
+}
+
+function followupNextDateOf(record) {
+  return record?.nextFollowTime || record?.next_follow_date || record?.nextFollowDate || ''
+}
+
 function staffOptionLabel(employee) {
-  return `${employee.name || '未命名'}｜${roleLabel(normalizeStaffRole(employee.role)) || employee.role || '未设置岗位'}｜${normalizeStoreName(employee.store) || employee.store || '未设置门店'}`
+  return `${employee.name || '未命名'}｜${roleLabel(employeeRoleOf(employee)) || employee.role || '未设置岗位'}｜${employeeStoreOf(employee) || employee.store || '未设置门店'}`
 }
 
 function normalizeRecordStore(record) {
@@ -84,7 +117,7 @@ function normalizeRecordStore(record) {
   const normalizedRawStore = normalizeStoreName(rawStore)
   if (normalizedRawStore) return normalizedRawStore
 
-  const rawStoreId = record?.storeId || record?.store_id
+  const rawStoreId = record?.storeId || record?.store_id || record?.shop_id || record?.branch_id
   const legacyStoreMap = {
     1: '龙泉1店',
     2: '龙泉2店',
@@ -610,7 +643,7 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
   }
   const viewCustomers = safeCustomers.filter(customerInScope)
   const customerById = new Map(viewCustomers.map((item) => [String(item.id), item]))
-  const employeeStore = (employee) => normalizeStoreName(employee.store)
+  const employeeStore = (employee) => employeeStoreOf(employee)
   const employeeInScope = (employee) => {
     const store = employeeStore(employee)
     if (!store) return false
@@ -688,20 +721,34 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
     const followDays = customer.lastFollowTime ? daysSince(customer.lastFollowTime) : 999
     return amount >= 10000 && followDays >= 30
   })
-  const staffRank = viewEmployees
-    .filter((item) => item.role === 'beautician')
+  const profileEmployee = !isBoss && profile?.name
+    ? { id: `profile-${profile.name}`, name: profile.name, role: profile.role, store: profileStore }
+    : null
+  const followupStaff = [...viewEmployees, profileEmployee]
+    .filter(Boolean)
+    .filter((item, index, list) => list.findIndex((other) => `${other.name}-${employeeStore(other)}` === `${item.name}-${employeeStore(item)}`) === index)
+    .filter((item) => FOLLOWUP_STAFF_ROLES.includes(employeeRoleOf(item)))
+  const staffRank = followupStaff
     .map((item) => ({
       id: item.id,
       name: item.name || '未填写',
       store: employeeStore(item),
-      todayFollowups: todayFollowups.filter((record) => record.owner === item.name).length,
-      todayAppointments: todayFollowups.filter((record) => record.owner === item.name && record.hasAppointment).length,
+      role: employeeRoleOf(item),
+      todayDue: dueCustomers.filter((customer) => customer.owner === item.name).length,
+      todayFollowups: todayFollowups.filter((record) => followupOwnerOf(record) === item.name).length,
+      todayAppointments: todayFollowups.filter((record) => followupOwnerOf(record) === item.name && record.hasAppointment).length,
+      todayArrivals: todayOrders.filter((order) => order.serviceEmployeeName === item.name || order.salesEmployeeName === item.name || order.consultantName === item.name).length,
       followupRevenue: todayOrders
         .filter((order) => order.salesEmployeeName === item.name || order.serviceEmployeeName === item.name)
         .reduce((sum, order) => sum + Number(order.actualAmount || 0), 0),
     }))
-    .sort((a, b) => b.todayFollowups - a.todayFollowups || b.followupRevenue - a.followupRevenue)
-    .slice(0, 5)
+    .map((item) => ({
+      ...item,
+      todayUnfinished: Math.max(Number(item.todayDue || 0) - Number(item.todayFollowups || 0), 0),
+      completionRate: item.todayDue > 0 ? Math.min(Math.round((Number(item.todayFollowups || 0) / item.todayDue) * 100), 100) : 0,
+      status: item.todayDue === 0 ? '今日无任务' : item.todayFollowups >= item.todayDue ? '已完成' : '需跟进',
+    }))
+    .sort((a, b) => b.todayUnfinished - a.todayUnfinished || b.todayFollowups - a.todayFollowups || b.followupRevenue - a.followupRevenue)
   const todoCustomers = viewCustomers
     .filter((item) => (visitDays(item.lastVisit) !== null && visitDays(item.lastVisit) >= 90) || item.nextFollowTime === today || normalizeActivationStatus(item.followStatus || item.lastFollowResult) === '未联系')
     .sort((a, b) => (visitDays(b.lastVisit) || 0) - (visitDays(a.lastVisit) || 0))
@@ -826,21 +873,25 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
           </div>
         </Panel>
 
-        <Panel title="员工跟进提醒">
+        <Panel title="员工跟进提醒" subtitle="店长、美容师、顾问都纳入跟进执行提醒">
           <div className="space-y-3">
             {staffRank.map((item, index) => (
-              <div key={item.id} className="flex items-center justify-between rounded-lg bg-pink-50 px-4 py-4">
+              <div key={item.id} className="rounded-lg bg-pink-50 px-4 py-4">
                 <div className="flex items-center gap-3">
                   <span className="grid h-8 w-8 place-items-center rounded-full bg-white text-sm font-bold text-[#c2185b]">{index + 1}</span>
                   <div>
                     <div className="font-semibold text-[#5f263c]">{item.name}</div>
-                    <div className="text-xs text-[#a36a81]">{item.store}</div>
+                    <div className="text-xs text-[#a36a81]">{roleLabel(item.role)} · {item.store || '未设置门店'}</div>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3 text-center text-sm">
-                  <div><b className="block text-[#bd1657]">{item.todayFollowups}</b>跟进</div>
-                  <div><b className="block text-[#bd1657]">{item.todayAppointments}</b>预约</div>
-                  <div><b className="block text-[#bd1657]">{money(item.followupRevenue)}</b>成交</div>
+                <div className="mt-3 grid grid-cols-4 gap-2 text-center text-sm xl:grid-cols-8">
+                  <div><b className="block text-[#bd1657]">{item.todayDue}</b>应跟进</div>
+                  <div><b className="block text-[#bd1657]">{item.todayFollowups}</b>已跟进</div>
+                  <div><b className="block text-orange-600">{item.todayUnfinished}</b>未跟进</div>
+                  <div><b className="block text-green-600">{item.todayAppointments}</b>预约</div>
+                  <div><b className="block text-[#5f263c]">{item.todayArrivals}</b>到店</div>
+                  <div><b className="block text-[#bd1657]">{item.completionRate}%</b>完成率</div>
+                  <div className="xl:col-span-2"><Badge tone={item.status === '需跟进' ? 'warning' : item.status === '已完成' ? 'success' : 'light'}>{item.status}</Badge></div>
                 </div>
               </div>
             ))}
@@ -1082,6 +1133,7 @@ function CustomersModule({ customers, stores, profile, role, customerError, save
 function ActivationModule({ customers, employees, followups, stores, profile, role, updateCustomerStatus, saveFollowup }) {
   const [drafts, setDrafts] = useState({})
   const [historyOpen, setHistoryOpen] = useState({})
+  const [editingFollowupId, setEditingFollowupId] = useState(null)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const canChooseStore = isBossRole(role)
@@ -1100,9 +1152,16 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
   const safeFollowups = Array.isArray(followups) ? followups : []
   const customerFollowups = (customer) => safeFollowups
     .filter((item) => String(item.customerId) === String(customer.id) || (customer.phone && item.customerPhone === customer.phone))
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .sort((a, b) => {
+      const byTime = new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      if (byTime) return byTime
+      const aId = Number(a.id)
+      const bId = Number(b.id)
+      if (Number.isFinite(aId) && Number.isFinite(bId)) return bId - aId
+      return String(b.id || '').localeCompare(String(a.id || ''))
+    })
   const latestFollowupOf = (customer) => customerFollowups(customer)[0] || null
-  const statusFromFollowup = (item) => normalizeActivationStatus(item?.issueType || item?.feedback || '')
+  const statusFromFollowup = (item) => normalizeActivationStatus(item?.status || item?.followStatus || item?.issueType || item?.feedback || '')
   const filteredCustomers = storeFilteredCustomers.filter((item) => {
     const ownerMatch = filters.owner === '全部美容师' || item.owner === filters.owner
     const levelMatch = filters.level === '全部等级' || item.level === filters.level
@@ -1148,6 +1207,7 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
     nextFollowTime: customer.nextFollowTime || '',
     followNote: customer.followNote || '',
     method: '电话',
+    followupBy: customer.owner || profile?.name || '',
     todayTaskCompletedAt: customer.todayTaskCompletedAt || '',
     ...(drafts[customer.id] || {}),
   })
@@ -1173,6 +1233,20 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
     saveActivation(customer, { todayTaskCompletedAt: new Date().toISOString() })
   }
 
+  const startEditingFollowup = (customer, followup) => {
+    if (!followup) return
+    updateDraft(customer.id, {
+      followStatus: statusFromFollowup(followup),
+      method: followupMethodOf(followup) || '电话',
+      followNote: followupContentOf(followup),
+      nextFollowTime: followupNextDateOf(followup),
+      followupBy: followupOwnerOf(followup) || customer.owner || profile?.name || '',
+    })
+    setEditingFollowupId(followup.id)
+    setToast('已进入编辑状态')
+    window.setTimeout(() => setToast(''), 1600)
+  }
+
   const saveActivationFollowup = async (customer, latest = null) => {
     setError('')
     const draft = getDraft(customer)
@@ -1183,7 +1257,7 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
         customerName: customer.name,
         customerPhone: customer.phone,
         store: customer.store,
-        owner: profile?.role === 'beautician' ? profile?.name || customer.owner : customer.owner || profile?.name || '',
+        owner: draft.followupBy || customer.owner || profile?.name || '',
         method: draft.method || '电话',
         content: draft.followNote || '',
         feedback: draft.followStatus,
@@ -1195,6 +1269,7 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
         nextFollowTime: draft.nextFollowTime,
       })
       await updateCustomerStatus(customer.id, draft)
+      setEditingFollowupId(null)
       setToast(latest ? '跟进已更新' : '跟进已新增')
       window.setTimeout(() => setToast(''), 1800)
     } catch (followupError) {
@@ -1298,11 +1373,11 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                         {latestFollowup ? (
                           <div className="grid gap-1 md:grid-cols-2">
                             <span>时间：{formatDateTime(latestFollowup.createdAt) || '未记录'}</span>
-                            <span>跟进人：{latestFollowup.owner || '-'}</span>
-                            <span>方式：{latestFollowup.method || '-'}</span>
+                            <span>跟进人：{followupOwnerOf(latestFollowup) || '-'}</span>
+                            <span>方式：{followupMethodOf(latestFollowup) || '-'}</span>
                             <span>状态：{statusFromFollowup(latestFollowup)}</span>
-                            <span className="md:col-span-2">备注：{latestFollowup.content || latestFollowup.feedback || '-'}</span>
-                            <span className="md:col-span-2">下次跟进日期：{latestFollowup.nextFollowTime || '未定'}</span>
+                            <span className="md:col-span-2">备注：{followupContentOf(latestFollowup) || '-'}</span>
+                            <span className="md:col-span-2">下次跟进日期：{followupNextDateOf(latestFollowup) || '未定'}</span>
                           </div>
                         ) : (
                           <div>暂无历史跟进，请先新增跟进。</div>
@@ -1333,10 +1408,14 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                     ))}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[150px_190px_1fr] md:items-start">
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[150px_160px_190px_1fr] md:items-start">
                     <label>
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进方式</span>
                       <Select value={draft.method} onChange={(value) => updateDraft(item.id, { method: value })} options={followMethods} />
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进人</span>
+                      <Input value={draft.followupBy} onChange={(value) => updateDraft(item.id, { followupBy: value })} />
                     </label>
                     <label>
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">下次跟进日期</span>
@@ -1349,7 +1428,13 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <PrimaryButton onClick={() => saveActivationFollowup(item)}>新增跟进</PrimaryButton>
-                    {latestFollowup && <SecondaryButton onClick={() => saveActivationFollowup(item, latestFollowup)}>编辑最近跟进</SecondaryButton>}
+                    {latestFollowup ? (
+                      editingFollowupId === latestFollowup.id
+                        ? <PrimaryButton onClick={() => saveActivationFollowup(item, latestFollowup)}>保存编辑</PrimaryButton>
+                        : <SecondaryButton onClick={() => startEditingFollowup(item, latestFollowup)}>编辑最近跟进</SecondaryButton>
+                    ) : (
+                      <button disabled className="cursor-not-allowed rounded-lg border border-pink-100 bg-pink-50 px-5 py-3 font-semibold text-[#b9859a]">暂无跟进可编辑</button>
+                    )}
                     <SecondaryButton onClick={() => saveActivation(item)}>只保存状态</SecondaryButton>
                     <SecondaryButton onClick={() => completeTodayTask(item)}>{completed ? '已完成' : '今日已完成'}</SecondaryButton>
                     <SecondaryButton onClick={() => setHistoryOpen((current) => ({ ...current, [item.id]: !current[item.id] }))}>
@@ -1364,11 +1449,11 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                           <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={statusFromFollowup(record) === '已预约' ? 'success' : statusFromFollowup(record) === '无意向' ? 'light' : 'pink'}>{statusFromFollowup(record)}</Badge>
                             <span>{formatDateTime(record.createdAt) || '未记录时间'}</span>
-                            <span>{record.owner || '-'}</span>
-                            <span>{record.method || '-'}</span>
+                            <span>{followupOwnerOf(record) || '-'}</span>
+                            <span>{followupMethodOf(record) || '-'}</span>
                           </div>
-                          <div className="mt-2">备注：{record.content || record.feedback || '-'}</div>
-                          <div className="mt-1">下次跟进：{record.nextFollowTime || '未定'}</div>
+                          <div className="mt-2">备注：{followupContentOf(record) || '-'}</div>
+                          <div className="mt-1">下次跟进：{followupNextDateOf(record) || '未定'}</div>
                         </div>
                       ))}
                     </div>
@@ -1393,9 +1478,9 @@ function FollowupsModule({ followups, customers, employees, stores, profile, rol
   const [error, setError] = useState('')
   const [filters, setFilters] = useState({ store: canChooseStore ? '全部' : fixedStore, owner: isBeautician ? profile?.name || '' : '全部', issueType: '全部', date: '' })
   const staffSummary = employees
-    .filter((item) => item.role === 'beautician')
+    .filter((item) => FOLLOWUP_STAFF_ROLES.includes(employeeRoleOf(item)))
     .map((employee) => {
-      const records = followups.filter((item) => item.owner === employee.name)
+      const records = followups.filter((item) => followupOwnerOf(item) === employee.name)
       return {
         ...employee,
         records: records.length,
