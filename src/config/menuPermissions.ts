@@ -6,6 +6,7 @@ export const menuPermissions = {
   performanceMonthly: ['admin', 'boss', 'manager'],
   handworkSettlement: ['admin', 'boss', 'manager'],
   projectCommissions: ['admin', 'boss', 'manager'],
+  employees: ['admin', 'boss', 'manager'],
 }
 
 export const sensitiveRoutes = {
@@ -26,4 +27,5 @@ export const menuLabels = {
   performanceMonthly: '员工业绩月报',
   handworkSettlement: '手工费结算',
   projectCommissions: '项目标准库',
+  employees: '员工管理',
 }

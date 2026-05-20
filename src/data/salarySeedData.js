@@ -8,6 +8,33 @@ export const projectCategoryOptions = [
   ['other', '其他'],
 ]
 
+const defaultProjectPrices = {
+  面部基础护理: 198,
+  眼八宝: 98,
+  面部香薰: 298,
+  颈护: 128,
+  肩颈调理: 298,
+  胸部保养: 398,
+  卵巢保养: 398,
+  肾保: 398,
+  肝胆排毒: 598,
+  淋巴: 398,
+  腿部保养: 398,
+  臀疗: 498,
+  头疗: 168,
+  艾灸: 18,
+  泥灸: 38,
+  贝罗娜: 1280,
+  中胚: 980,
+  祛木: 680,
+  私密SAP: 1280,
+  苗药: 398,
+  童颜抗衰仪: 980,
+  魔术刀: 680,
+  骨龄抗衰: 980,
+  逆龄炮: 780,
+}
+
 export const defaultProjectCommissions = [
   { projectName: '面部基础护理', category: 'face', manualCommission: 3, durationMinutes: 60, unit: '次', isActive: true, remark: '' },
   { projectName: '眼八宝', category: 'face', manualCommission: 3, durationMinutes: 30, unit: '次', isActive: true, remark: '' },
@@ -33,7 +60,16 @@ export const defaultProjectCommissions = [
   { projectName: '魔术刀', category: 'high_end', manualCommission: 15, durationMinutes: 40, unit: '次', isActive: true, remark: '局部15元' },
   { projectName: '骨龄抗衰', category: 'high_end', manualCommission: 20, durationMinutes: 40, unit: '次', isActive: true, remark: '' },
   { projectName: '逆龄炮', category: 'high_end', manualCommission: 15, durationMinutes: 30, unit: '次', isActive: true, remark: '' },
-].map((item, index) => ({ id: `preset-project-${index + 1}`, ...item }))
+].map((item, index) => ({
+  id: `preset-project-${index + 1}`,
+  defaultPrice: defaultProjectPrices[item.projectName] || 298,
+  isCardConsumption: item.category === 'moxibustion',
+  isHighEnd: item.category === 'high_end',
+  includeSaleCommission: true,
+  includeManualCommission: true,
+  defaultPerformanceType: item.category === 'moxibustion' ? '消耗' : '售前',
+  ...item,
+}))
 
 const managerNames = ['刘店长', '王店长', '周店长', '何店长']
 const beauticianNames = [

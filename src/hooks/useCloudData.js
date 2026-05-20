@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import {
   stores as fixedStores,
 } from '../data/seedData'
+import { defaultProjectCommissions } from '../data/salarySeedData'
 import {
   fromCustomer,
   fromCashierOrder,
@@ -109,6 +110,31 @@ function mergeTodayStats(employees, stats) {
       dailyStatDate: stat?.date || todayString(),
     }
   })
+}
+
+function defaultEmployeesForStore(store) {
+  return [
+    {
+      name: `${store}店长`,
+      phone: '',
+      store,
+      role: 'manager',
+      note: '系统初始化默认店长，可在员工管理中修改',
+      entry_date: null,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      name: `${store}顾问`,
+      phone: '',
+      store,
+      role: 'consultant',
+      note: '系统初始化默认顾问，可在员工管理中修改',
+      entry_date: null,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    },
+  ]
 }
 
 function errorMessage(error, fallback = '云端数据操作失败') {
@@ -268,7 +294,30 @@ export function useCloudData(session) {
         return false
       }
 
-      const mappedEmployees = (data || []).map(fromEmployee)
+      let mappedEmployees = (data || []).map(fromEmployee)
+      const seedStores = isBossRole(profileData.role) ? fixedStores : [profileStore(profileData)]
+      const seedPayloads = seedStores.flatMap((store) => {
+        const storeEmployees = mappedEmployees.filter((item) => normalizeStoreName(item.store) === store)
+        const hasManager = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'manager')
+        const hasConsultant = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'consultant')
+        return defaultEmployeesForStore(store).filter((item) => (
+          (item.role === 'manager' && !hasManager) || (item.role === 'consultant' && !hasConsultant)
+        ))
+      })
+
+      if (seedPayloads.length > 0) {
+        const { data: seededEmployees, error: seedError } = await supabase
+          .from('employees')
+          .insert(seedPayloads)
+          .select(employeeSelectFields)
+        if (seedError) {
+          console.error('employees 初始化默认员工失败:', seedError)
+          setEmployeeError(errorMessage(seedError))
+        } else {
+          mappedEmployees = [...mappedEmployees, ...(seededEmployees || []).map(fromEmployee)]
+        }
+      }
+
       const employeeIds = mappedEmployees.map((item) => item.id).filter(Boolean)
       let statsQuery = supabase
         .from('employee_daily_stats')
@@ -495,7 +544,22 @@ export function useCloudData(session) {
         return false
       }
 
-      setProjectCommissions((data || []).map(fromProjectCommission))
+      let projectRows = data || []
+      if (projectRows.length === 0) {
+        const seedPayloads = defaultProjectCommissions.map((item) => toProjectCommission(item))
+        const { data: seededProjects, error: seedError } = await supabase
+          .from('project_commission_settings')
+          .insert(seedPayloads)
+          .select(projectCommissionSelectFields)
+        if (seedError) {
+          console.error('project_commission_settings 初始化默认项目失败:', seedError)
+          setProjectCommissionError(errorMessage(seedError))
+        } else {
+          projectRows = seededProjects || []
+        }
+      }
+
+      setProjectCommissions(projectRows.map(fromProjectCommission))
       return true
     } catch (projectsError) {
       const message = errorMessage(projectsError)

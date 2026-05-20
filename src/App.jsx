@@ -50,6 +50,7 @@ function roleLabel(role) {
     director: '总监',
     regional_manager: '区域经理',
     technical_teacher: '技术老师',
+    reception: '前台',
   }
   return labels[role] || role || ''
 }
@@ -66,6 +67,7 @@ function normalizeStaffRole(role) {
     总监: 'director',
     管理员: 'admin',
     区域经理: 'regional_manager',
+    前台: 'reception',
   }
   return roleMap[role] || roleMap[String(role || '').trim()] || value
 }
@@ -155,6 +157,7 @@ const staffRoleOptions = [
   ['director', '总监'],
   ['regional_manager', '区域经理'],
   ['technical_teacher', '技术老师'],
+  ['reception', '前台'],
   ['admin', '管理员'],
 ]
 
@@ -164,7 +167,7 @@ const projectCategoryOptions = [
   ['high_end', '高端项目'],
   ['instrument', '仪器'],
   ['material', '耗材'],
-  ['moxibustion', '耗材'],
+  ['moxibustion', '艾灸'],
   ['private', '私密'],
   ['anti_aging', '抗衰'],
   ['other', '其他'],
@@ -563,6 +566,7 @@ function App() {
         {visibleActive === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
         {visibleActive === 'handworkSettlement' && <HandworkSettlementModule {...pageProps} />}
         {visibleActive === 'projectCommissions' && <ProjectStandardLibraryModule {...pageProps} />}
+        {visibleActive === 'employees' && <EmployeesModule {...pageProps} />}
       </main>
     </div>
   )
@@ -1665,7 +1669,7 @@ function FollowupsModule({ followups, customers, employees, stores, profile, rol
   )
 }
 
-function CashierModule({ cashierOrders, customers, employees, projectCommissions, stores, profile, role, cashierOrderError, saveCashierOrder, voidCashierOrder }) {
+function CashierModule({ cashierOrders, customers, employees, projectCommissions, stores, profile, role, cashierOrderError, saveCashierOrder, voidCashierOrder, setActive }) {
   const isBoss = isBossRole(role)
   const isStaff = isBeauticianRole(role)
   const canChooseStore = isBoss
@@ -1684,7 +1688,9 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
   const [detail, setDetail] = useState(null)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
-  const standardProjects = (Array.isArray(projectCommissions) && projectCommissions.length ? projectCommissions : defaultProjectCommissions)
+  const standardProjects = Array.isArray(projectCommissions) ? projectCommissions : []
+  const activeProjectOptions = standardProjects.filter((item) => item.isActive !== false && isUuid(item.id))
+  const activeEmployeeOptions = (Array.isArray(employees) ? employees : []).filter((item) => item.isActive !== false && isUuid(item.id))
   const activeOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((item) => item.status !== 'voided')
   const visibleOrders = activeOrders.filter((item) => {
     const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.storeName || item.store) === filters.store
@@ -1783,9 +1789,12 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
       <Panel title="今日收银台" subtitle="一次开单自动生成顾客、员工、门店和月度经营数据" action={<PrimaryButton onClick={openCreate}>新增开单</PrimaryButton>}>
         {toast && <Toast>{toast}</Toast>}
         {(error || cashierOrderError) && <ErrorNotice>{error || cashierOrderError}</ErrorNotice>}
-        {customers.length === 0 && <ErrorNotice>暂无顾客，请先新增顾客</ErrorNotice>}
-        {standardProjects.length === 0 && <ErrorNotice>暂无项目，请先到项目标准库添加</ErrorNotice>}
-        {employees.length === 0 && <ErrorNotice>暂无员工，请先到员工管理添加</ErrorNotice>}
+        {todayOrders.length === 0 && (
+          <EmptyActionCard title="今日暂无订单" description="请先新增开单，今日实收、消耗、刷卡和订单数会自动从开单记录汇总。" actionLabel="新增开单" onAction={openCreate} />
+        )}
+        {customers.length === 0 && <EmptyActionCard title="暂无顾客数据" description="当前账号可见范围内还没有顾客。请先到顾客管理新增顾客，再回到收银台开单。" actionLabel="前往顾客管理" onAction={() => setActive('customers')} />}
+        {activeProjectOptions.length === 0 && <EmptyActionCard title="暂无可用项目" description="开单只能选择已启用的项目。请先到项目标准库新增或启用项目。" actionLabel="前往项目标准库" onAction={() => setActive('projectCommissions')} />}
+        {activeEmployeeOptions.length === 0 && <EmptyActionCard title="暂无可用员工" description="操作老师和开单人来自员工管理。请先添加店长、顾问、美容师或前台。" actionLabel="前往员工管理" onAction={() => setActive('employees')} />}
         <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <MetricBox label="今日实收" value={money(todayOrders.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0))} />
           <MetricBox label="今日消耗" value={money(todayOrders.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0))} />
@@ -1846,8 +1855,8 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
         <CashierDrawer
           data={editing}
           customers={customers}
-          employees={employees}
-          projects={standardProjects.filter((item) => item.isActive !== false && isUuid(item.id))}
+          employees={activeEmployeeOptions}
+          projects={activeProjectOptions}
           stores={stores}
           profile={profile}
           lockedStore={!canChooseStore}
@@ -2801,18 +2810,20 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   const [customerSearch, setCustomerSearch] = useState(data.customerName || data.customerPhone || '')
   const [showCustomerResults, setShowCustomerResults] = useState(false)
   const [validationError, setValidationError] = useState('')
+  const selectedStoreName = normalizeStoreName(form.storeName)
   const staffInStore = employees
-    .filter((item) => !lockedStore || !form.storeName || normalizeStoreName(item.store) === normalizeStoreName(form.storeName))
+    .filter((item) => !selectedStoreName || normalizeStoreName(item.store) === selectedStoreName)
   const staffOptionsByRoles = (roles) => staffInStore
     .filter((item) => isUuid(item.id))
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
   const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
-  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'director', 'admin', 'regional_manager'])
+  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'director', 'admin', 'regional_manager', 'reception'])
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
-  const selectedStoreName = normalizeStoreName(form.storeName)
-  const storeCustomers = customers.filter((customer) => isUuid(customer.id) && normalizeRecordStore(customer) === selectedStoreName)
+  const storeCustomers = customers
+    .filter((customer) => isUuid(customer.id) && normalizeRecordStore(customer) === selectedStoreName)
+    .sort((a, b) => String(b.lastVisit || b.createdAt || '').localeCompare(String(a.lastVisit || a.createdAt || '')))
   const customerResults = storeCustomers
     .filter((item) => {
       if (!normalizedCustomerSearch) return true
@@ -2827,6 +2838,26 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     consumeAmount: sum.consumeAmount + Number(item.consumeAmount || 0),
     manualCommissionAmount: sum.manualCommissionAmount + Number(item.manualCommissionAmount || 0),
   }), { originalAmount: 0, discountAmount: 0, actualAmount: 0, consumeAmount: 0, manualCommissionAmount: 0 })
+  const projectById = new Map(projects.map((project) => [String(project.id), project]))
+  const selectedOrderItems = form.orderItems.filter((item) => item.projectId || item.projectName)
+  const hasValidItems = selectedOrderItems.length > 0 && selectedOrderItems.every((item) => (
+    isUuid(item.projectId)
+    && projectById.get(String(item.projectId))?.isActive !== false
+    && Number(item.quantity || 0) > 0
+    && Number(item.originalAmount || 0) >= 0
+    && Number(item.discountAmount || 0) >= 0
+    && Number(item.actualAmount || 0) >= 0
+    && Number(item.consumeAmount || 0) >= 0
+  ))
+  const selectedCustomer = storeCustomers.find((customer) => String(customer.id) === String(form.customerId))
+  const canSubmitCashierOrder = Boolean(
+    isUuid(form.customerId)
+    && selectedCustomer
+    && hasValidItems
+    && isUuid(form.serviceEmployeeId)
+    && isUuid(form.salesEmployeeId)
+    && (!form.consultantId || isUuid(form.consultantId)),
+  )
   const chooseCustomer = (customer) => {
     setForm({
       ...form,
@@ -2918,7 +2949,6 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('请先选择顾客')
       throw new Error('请先选择顾客')
     }
-    const selectedCustomer = storeCustomers.find((customer) => String(customer.id) === String(form.customerId))
     if (!selectedCustomer || normalizeRecordStore(selectedCustomer) !== selectedStoreName) {
       setValidationError('顾客不属于当前门店，请重新选择顾客')
       throw new Error('顾客不属于当前门店，请重新选择顾客')
@@ -2940,6 +2970,21 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
+    const inactiveIndex = orderItems.findIndex((item) => projectById.get(String(item.projectId))?.isActive === false || !projectById.has(String(item.projectId)))
+    if (inactiveIndex >= 0) {
+      setValidationError(`第 ${inactiveIndex + 1} 个项目已停用或不存在，不能开单。`)
+      throw new Error(`第 ${inactiveIndex + 1} 个项目已停用或不存在，不能开单。`)
+    }
+    const invalidAmountIndex = orderItems.findIndex((item) => (
+      Number(item.originalAmount || 0) < 0
+      || Number(item.discountAmount || 0) < 0
+      || Number(item.actualAmount || 0) < 0
+      || Number(item.consumeAmount || 0) < 0
+    ))
+    if (invalidAmountIndex >= 0) {
+      setValidationError(`第 ${invalidAmountIndex + 1} 个项目金额不能为负数。`)
+      throw new Error(`第 ${invalidAmountIndex + 1} 个项目金额不能为负数。`)
+    }
     if (!form.serviceEmployeeName) {
       setValidationError('请选择操作老师。')
       throw new Error('请选择操作老师。')
@@ -2956,7 +3001,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
   }
 
   return (
-    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={validateAndSave} saveLabel="保存开单">
+    <Drawer title={form.id ? '编辑开单' : '新增开单'} onClose={onClose} onSave={validateAndSave} saveLabel="保存开单" saveDisabled={!canSubmitCashierOrder}>
       {validationError && <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{validationError}</div>}
       <div className="mb-4 rounded-lg bg-pink-50/70 p-4">
         <div className="mb-3 font-bold text-[#641631]">基础信息</div>
@@ -2988,7 +3033,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
             <Select
               value={form.customerId || ''}
               onChange={chooseCustomerById}
-              options={storeCustomers.length ? [['', '请选择顾客'], ...storeCustomers.map((customer) => [customer.id, `${customer.name}｜${customer.phone || '无手机号'}｜${normalizeRecordStore(customer) || '未设置门店'}`])] : [['', '暂无该门店顾客，请先到顾客管理添加']]}
+              options={storeCustomers.length ? [['', '请选择顾客（默认显示最近到店前20位）'], ...storeCustomers.slice(0, 20).map((customer) => [customer.id, `${customer.name}｜${customer.phone || '无手机号'}｜${normalizeRecordStore(customer) || '未设置门店'}`])] : [['', '暂无该门店顾客，请先到顾客管理添加']]}
             />
           </div>
           {(form.customerName || form.customerPhone) && (
@@ -3015,7 +3060,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div className="md:col-span-2 xl:col-span-2">
-                  <Field label="项目选择"><Select value={item.projectId} onChange={(value) => chooseProject(index, value)} options={projects.length ? [['', '请选择项目'], ...projects.map((project) => [project.id, `${project.projectName}${project.durationMinutes ? ` · ${project.durationMinutes}分钟` : ''}`])] : [['', '暂无项目，请联系管理员添加']]} /></Field>
+                  <Field label="项目选择"><Select value={item.projectId} onChange={(value) => chooseProject(index, value)} options={projects.length ? [['', '请选择项目'], ...projects.map((project) => [project.id, `${project.projectName}${project.durationMinutes ? ` · ${project.durationMinutes}分钟` : ''}`])] : [['', '暂无项目，请先到项目标准库添加']]} /></Field>
                 </div>
                 <div className="min-w-[120px]"><Field label="数量"><Input type="number" value={item.quantity} onChange={(value) => updateItem(index, { quantity: value })} /></Field></div>
                 <div className="min-w-[120px]"><Field label="项目时长"><Input value={item.durationMinutes || ''} onChange={() => {}} /></Field></div>
@@ -3241,7 +3286,7 @@ function RankList({ rows }) {
   )
 }
 
-function Drawer({ title, onClose, onSave, children, successMessage, saveLabel = '保存' }) {
+function Drawer({ title, onClose, onSave, children, successMessage, saveLabel = '保存', saveDisabled = false }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -3272,7 +3317,7 @@ function Drawer({ title, onClose, onSave, children, successMessage, saveLabel = 
         {error && <div className="mt-5 rounded-lg bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{error}</div>}
         <div className="mt-6 flex justify-end gap-3">
           <button onClick={onClose} className="rounded-lg border border-pink-100 px-6 py-3 font-semibold text-[#8b4d66] hover:bg-pink-50">取消</button>
-          <PrimaryButton onClick={handleSave}>{saving ? '保存中...' : saveLabel}</PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={saving || saveDisabled}>{saving ? '保存中...' : saveLabel}</PrimaryButton>
         </div>
       </div>
     </div>
@@ -3291,6 +3336,20 @@ function ErrorNotice({ children }) {
   return (
     <div className="mb-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
       {children}
+    </div>
+  )
+}
+
+function EmptyActionCard({ title, description, actionLabel, onAction }) {
+  return (
+    <div className="mb-4 rounded-lg border border-pink-100 bg-white px-5 py-5 shadow-sm">
+      <div className="text-base font-bold text-[#641631]">{title}</div>
+      <div className="mt-2 text-sm leading-6 text-[#8a4964]">{description}</div>
+      {actionLabel && onAction && (
+        <div className="mt-4">
+          <SecondaryButton onClick={onAction}>{actionLabel}</SecondaryButton>
+        </div>
+      )}
     </div>
   )
 }
@@ -3335,8 +3394,8 @@ function Select({ value, onChange, options, disabled = false }) {
   )
 }
 
-function PrimaryButton({ children, onClick }) {
-  return <button onClick={onClick} className="rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d]">{children}</button>
+function PrimaryButton({ children, onClick, disabled = false }) {
+  return <button disabled={disabled} onClick={onClick} className="rounded-lg bg-[#c2185b] px-5 py-3 font-semibold text-white shadow-md shadow-pink-200 transition hover:bg-[#a9134d] disabled:cursor-not-allowed disabled:bg-pink-200 disabled:text-white/80 disabled:shadow-none">{children}</button>
 }
 
 function SecondaryButton({ children, onClick }) {
