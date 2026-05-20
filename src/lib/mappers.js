@@ -240,27 +240,53 @@ export function toStoreTarget(row, profile) {
 }
 
 export function fromProjectCommission(row) {
+  let config = {}
+  let remarkText = row.remark || ''
+  try {
+    const parsed = row.remark ? JSON.parse(row.remark) : {}
+    config = parsed && typeof parsed === 'object' ? parsed : {}
+    remarkText = config.text || ''
+  } catch {
+    config = {}
+  }
   return {
     id: row.id,
     projectName: row.project_name || '',
     category: row.category || 'other',
+    defaultPrice: Number(config.defaultPrice || 0),
+    manualCommission: Number(row.manual_commission || config.manualCommission || 0),
     durationMinutes: row.duration_minutes ?? '',
     unit: row.unit || '次',
+    isCardConsumption: Boolean(config.isCardConsumption),
+    isHighEnd: Boolean(config.isHighEnd),
+    includeSaleCommission: config.includeSaleCommission !== false,
+    includeManualCommission: config.includeManualCommission !== false,
+    defaultPerformanceType: config.defaultPerformanceType || '售前',
     isActive: row.is_active !== false,
-    remark: row.remark || '',
+    remark: remarkText,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
 }
 
 export function toProjectCommission(row) {
+  const remarkConfig = {
+    text: row.remark || '',
+    defaultPrice: Number(row.defaultPrice || 0),
+    isCardConsumption: Boolean(row.isCardConsumption),
+    isHighEnd: Boolean(row.isHighEnd),
+    includeSaleCommission: row.includeSaleCommission !== false,
+    includeManualCommission: row.includeManualCommission !== false,
+    defaultPerformanceType: row.defaultPerformanceType || '售前',
+  }
   return {
     project_name: row.projectName || '',
     category: row.category || 'other',
+    manual_commission: Number(row.manualCommission || 0),
     duration_minutes: row.durationMinutes === '' || row.durationMinutes == null ? null : Number(row.durationMinutes),
     unit: row.unit || '次',
     is_active: row.isActive !== false,
-    remark: row.remark || '',
+    remark: JSON.stringify(remarkConfig),
     updated_at: new Date().toISOString(),
   }
 }
@@ -307,8 +333,8 @@ export function fromCashierOrder(row) {
     discountAmount: Number(row.discount_amount || 0),
     actualAmount: Number(row.actual_amount || 0),
     consumeAmount: Number(row.consume_amount || 0),
-    manualCommission: 0,
-    manualCommissionAmount: 0,
+    manualCommission: Number(row.manual_commission || 0),
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
     durationMinutes: '',
   }
   return {
@@ -338,7 +364,7 @@ export function fromCashierOrder(row) {
     salesEmployeeName: row.sales_employee_name || '',
     consultantId: row.consultant_id,
     consultantName: row.consultant_name || '',
-    manualCommissionAmount: 0,
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
     remark: row.remark || '',
     status: row.status || 'active',
     orderItems: row.orderItems?.length ? row.orderItems : (row.project_name ? [fallbackItem] : []),
@@ -403,14 +429,15 @@ export function fromCashierOrderItem(row) {
     discountAmount: Number(row.discount_amount || 0),
     actualAmount: Number(row.actual_amount || 0),
     consumeAmount: Number(row.consume_amount || 0),
-    manualCommission: 0,
-    manualCommissionAmount: 0,
+    manualCommission: Number(row.manual_commission || 0),
+    manualCommissionAmount: Number(row.manual_commission_amount || 0),
     durationMinutes: row.duration_minutes ?? '',
   }
 }
 
 export function toCashierOrderItem(item, orderId) {
   const quantity = Number(item.quantity || 1)
+  const manualCommission = Number(item.manualCommission || 0)
   return {
     order_id: orderId,
     project_id: item.projectId || null,
@@ -421,8 +448,8 @@ export function toCashierOrderItem(item, orderId) {
     discount_amount: Number(item.discountAmount || 0),
     actual_amount: Number(item.actualAmount || 0),
     consume_amount: Number(item.consumeAmount || 0),
-    manual_commission: 0,
-    manual_commission_amount: 0,
+    manual_commission: manualCommission,
+    manual_commission_amount: Number(item.manualCommissionAmount ?? manualCommission * quantity),
     duration_minutes: item.durationMinutes === '' || item.durationMinutes == null ? null : Number(item.durationMinutes),
   }
 }

@@ -157,6 +157,20 @@ const staffRoleOptions = [
   ['admin', '管理员'],
 ]
 
+const projectCategoryOptions = [
+  ['face', '面部'],
+  ['body', '身体'],
+  ['high_end', '高端项目'],
+  ['instrument', '仪器'],
+  ['material', '耗材'],
+  ['moxibustion', '耗材'],
+  ['private', '私密'],
+  ['anti_aging', '抗衰'],
+  ['other', '其他'],
+]
+const projectCategoryLabels = Object.fromEntries(projectCategoryOptions)
+const performanceTypeOptions = ['售前', '售后', '嘉宾', '刷卡', '消耗', '体验卡', '赠送', '退款']
+
 function generateOrderNo(date = todayString()) {
   const day = String(date || todayString()).replaceAll('-', '')
   const suffix = String(Date.now() % 10000).padStart(4, '0')
@@ -176,8 +190,34 @@ function cashierOrderItems(order) {
     discountAmount: Number(order.discountAmount || 0),
     actualAmount: Number(order.actualAmount || 0),
     consumeAmount: Number(order.consumeAmount || 0),
+    manualCommission: Number(order.manualCommission || 0),
+    manualCommissionAmount: Number(order.manualCommissionAmount || 0),
     durationMinutes: '',
   }]
+}
+
+function orderPerformanceType(order) {
+  const direct = order?.performanceType || order?.performance_type
+  if (direct) return direct
+  const remark = String(order?.remark || '')
+  const match = remark.match(/业绩类型[:：]([^｜\]\s]+)/)
+  if (match) return match[1]
+  if (order?.paymentType === 'card') return '刷卡'
+  if (Number(order?.consumeAmount || 0) > 0 && Number(order?.actualAmount || 0) === 0) return '消耗'
+  return '售前'
+}
+
+function remarkWithoutPerformanceType(remark) {
+  return String(remark || '').replace(/^业绩类型[:：][^｜\]\s]+[｜\s]*/, '')
+}
+
+function remarkWithPerformanceType(type, remark) {
+  const cleanRemark = remarkWithoutPerformanceType(remark)
+  return `业绩类型：${type || '售前'}${cleanRemark ? `｜${cleanRemark}` : ''}`
+}
+
+function orderManualAmount(order) {
+  return cashierOrderItems(order).reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0)
 }
 
 function normalizeActivationStatus(value) {
@@ -384,19 +424,18 @@ function App() {
   const scopedEnrichedCustomers = filterRecordsByUserPermission(enrichedCustomers, currentUser)
   const scopedEmployees = filterRecordsByUserPermission(cloud.employees, currentUser).map((employee) => stripSalaryFields(employee, currentUser))
   const scopedFollowups = filterRecordsByUserPermission(cloud.followups, currentUser)
-  const scopedReviews = filterRecordsByUserPermission(cloud.reviews, currentUser)
   const scopedPerformanceReports = filterRecordsByUserPermission(cloud.performanceReports, currentUser)
   const scopedCashierOrders = filterRecordsByUserPermission(cloud.cashierOrders, currentUser)
   const scopedStoreTargets = filterRecordsByUserPermission(cloud.storeTargets, currentUser)
   const visibleNavItems = navItems.filter(([key]) => canViewMenu(currentUser, key, menuPermissions))
-  const activeAllowed = canViewMenu(currentUser, active, menuPermissions) || ['reviews'].includes(active)
+  const activeAllowed = canViewMenu(currentUser, active, menuPermissions)
   const visibleActive = activeAllowed ? active : 'noPermission'
 
   const pageProps = {
     customers: active === 'customers' ? scopedCustomers : scopedEnrichedCustomers,
     employees: scopedEmployees,
     followups: scopedFollowups,
-    reviews: scopedReviews,
+    reviews: filterRecordsByUserPermission(cloud.reviews, currentUser),
     performanceReports: scopedPerformanceReports,
     cashierOrders: scopedCashierOrders,
     projectCommissions: cloud.projectCommissions,
@@ -505,11 +544,9 @@ function App() {
         {visibleActive === 'customers' && <CustomersModule {...pageProps} />}
         {visibleActive === 'activation' && <ActivationModule {...pageProps} />}
         {visibleActive === 'cashier' && <CashierModule {...pageProps} />}
-        {visibleActive === 'reviews' && <ReviewsModule {...pageProps} />}
-        {visibleActive === 'employees' && <EmployeesModule {...pageProps} />}
-        {visibleActive === 'performanceReports' && <PerformanceReportsModule {...pageProps} />}
         {visibleActive === 'performanceMonthly' && <PerformanceMonthlyModule {...pageProps} />}
-        {visibleActive === 'storeTargets' && <StoreTargetsModule {...pageProps} />}
+        {visibleActive === 'handworkSettlement' && <HandworkSettlementModule {...pageProps} />}
+        {visibleActive === 'projectCommissions' && <ProjectStandardLibraryModule {...pageProps} />}
       </main>
     </div>
   )
@@ -1631,6 +1668,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
   const [detail, setDetail] = useState(null)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
+  const standardProjects = (Array.isArray(projectCommissions) && projectCommissions.length ? projectCommissions : defaultProjectCommissions)
   const activeOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((item) => item.status !== 'voided')
   const visibleOrders = activeOrders.filter((item) => {
     const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.storeName || item.store) === filters.store
@@ -1647,6 +1685,13 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
   const today = todayString()
   const todayOrders = visibleOrders.filter((item) => item.date === today)
   const monthOrders = visibleOrders.filter((item) => String(item.month || item.date || '').startsWith(filters.month))
+  const todayByType = performanceTypeOptions.reduce((map, type) => ({ ...map, [type]: 0 }), {})
+  todayOrders.forEach((order) => {
+    const type = orderPerformanceType(order)
+    const sign = type === '退款' ? -1 : 1
+    todayByType[type] = Number(todayByType[type] || 0) + sign * Number(order.actualAmount || 0)
+  })
+  const todayManualAmount = todayOrders.reduce((sum, item) => sum + orderManualAmount(item), 0)
   const showToast = (message) => {
     setToast(message)
     window.setTimeout(() => setToast(''), 2200)
@@ -1719,19 +1764,21 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
 
   return (
     <div className="space-y-5">
-      <Panel title="开单收银" subtitle="顾客开单、项目选择、收款和员工业绩统一入口" action={<PrimaryButton onClick={openCreate}>新增开单</PrimaryButton>}>
+      <Panel title="今日收银台" subtitle="一次开单自动生成顾客、员工、门店和月度经营数据" action={<PrimaryButton onClick={openCreate}>新增开单</PrimaryButton>}>
         {toast && <Toast>{toast}</Toast>}
         {(error || cashierOrderError) && <ErrorNotice>{error || cashierOrderError}</ErrorNotice>}
         {customers.length === 0 && <ErrorNotice>暂无顾客，请先新增顾客</ErrorNotice>}
-        {projectCommissions.length === 0 && <ErrorNotice>暂无项目，请联系管理员添加门店项目</ErrorNotice>}
+        {standardProjects.length === 0 && <ErrorNotice>暂无项目，请先到项目标准库添加</ErrorNotice>}
         {employees.length === 0 && <ErrorNotice>暂无员工，请先到员工管理添加</ErrorNotice>}
-        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-6">
-          <MetricBox label="今日开单金额" value={money(todayOrders.reduce((sum, item) => sum + Number(item.originalAmount || 0), 0))} />
-          <MetricBox label="今日实收金额" value={money(todayOrders.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0))} />
-          <MetricBox label="今日消耗金额" value={money(todayOrders.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0))} />
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-8">
+          <MetricBox label="今日实收" value={money(todayOrders.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0))} />
+          <MetricBox label="今日消耗" value={money(todayOrders.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0))} />
+          <MetricBox label="今日刷卡" value={money(todayByType['刷卡'])} />
+          <MetricBox label="今日售前" value={money(todayByType['售前'])} />
+          <MetricBox label="今日售后" value={money(todayByType['售后'])} />
+          <MetricBox label="今日嘉宾" value={money(todayByType['嘉宾'])} />
           <MetricBox label="今日订单数" value={todayOrders.length} />
-          <MetricBox label="本月实收金额" value={money(monthOrders.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0))} />
-          <MetricBox label="本月订单数" value={monthOrders.length} />
+          <MetricBox label="今日手工费" value={money(todayManualAmount)} />
         </div>
         <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-4">
           <Field label="月份"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
@@ -1746,7 +1793,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
         <Table>
           <thead>
             <tr>
-              {['订单编号', '日期', '门店', '顾客', '项目', '数量', '实收金额', '消耗金额', '收款方式', '操作老师', '开单人', '备注', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+              {['订单编号', '日期', '门店', '顾客', '项目', '数量', '实收金额', '消耗金额', '业绩类型', '操作老师', '开单人', '手工费', '操作'].map((head) => <Th key={head}>{head}</Th>)}
             </tr>
           </thead>
           <tbody>
@@ -1761,14 +1808,14 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
                 <Td>{item.date}</Td>
                 <Td>{item.storeName}</Td>
                 <Td>{item.customerName}</Td>
-                <Td>{item.projectName}</Td>
-                <Td>{item.quantity}</Td>
+                <Td>{cashierOrderItems(item).map((orderItem) => orderItem.projectName).filter(Boolean).join(' + ') || item.projectName}</Td>
+                <Td>{cashierOrderItems(item).reduce((sum, orderItem) => sum + Number(orderItem.quantity || 0), 0) || item.quantity}</Td>
                 <Td><b className="text-[#bd1657]">{money(item.actualAmount)}</b></Td>
                 <Td>{money(item.consumeAmount)}</Td>
-                <Td>{paymentLabels[item.paymentType] || item.paymentType}</Td>
+                <Td>{orderPerformanceType(item)}</Td>
                 <Td>{item.serviceEmployeeName}</Td>
                 <Td>{item.salesEmployeeName}</Td>
-                <Td>{item.remark}</Td>
+                <Td>{money(orderManualAmount(item))}</Td>
                 <Td>
                   <ActionButton onClick={() => setDetail(item)}>查看详情</ActionButton>
                   <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
@@ -1784,7 +1831,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
           data={editing}
           customers={customers}
           employees={employees}
-          projects={projectCommissions.filter((item) => item.isActive !== false)}
+          projects={standardProjects.filter((item) => item.isActive !== false)}
           stores={stores}
           profile={profile}
           lockedStore={!canChooseStore}
@@ -2290,6 +2337,124 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
   )
 }
 
+function HandworkSettlementModule({ cashierOrders, stores, role, profile, cashierOrderError }) {
+  const canChooseStore = isBossRole(role)
+  const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
+  const [filters, setFilters] = useState({
+    month: todayString().slice(0, 7),
+    store: canChooseStore ? '全部门店' : fixedStore,
+  })
+  const activeOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((order) => {
+    const store = normalizeStoreName(order.storeName || order.store)
+    const month = String(order.month || order.date || '').slice(0, 7)
+    const storeMatch = filters.store === '全部门店' || store === filters.store
+    return order.status !== 'voided' && month === filters.month && storeMatch
+  })
+  const rows = Object.values(activeOrders.reduce((map, order) => {
+    const name = order.serviceEmployeeName || '未设置操作老师'
+    const store = normalizeStoreName(order.storeName || order.store)
+    const key = `${store}-${name}`
+    map[key] = map[key] || { name, store, orders: 0, manualAmount: 0, consumeAmount: 0, salesAmount: 0 }
+    map[key].orders += 1
+    map[key].manualAmount += orderManualAmount(order)
+    map[key].consumeAmount += Number(order.consumeAmount || 0)
+    map[key].salesAmount += Number(order.actualAmount || 0)
+    return map
+  }, {})).sort((a, b) => b.manualAmount - a.manualAmount)
+  const totalManual = rows.reduce((sum, item) => sum + Number(item.manualAmount || 0), 0)
+
+  return (
+    <Panel title="手工费结算" subtitle="自动按开单项目固定手工费汇总，不再手工手算">
+      {cashierOrderError && <ErrorNotice>{cashierOrderError}</ErrorNotice>}
+      <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <MetricBox label="本月手工费" value={money(totalManual)} />
+        <MetricBox label="开单数" value={activeOrders.length} />
+        <MetricBox label="结算人数" value={rows.length} />
+      </div>
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+        <Field label="月份"><Input type="month" value={filters.month} onChange={(value) => setFilters({ ...filters, month: value })} /></Field>
+        <Field label="门店"><Select value={filters.store} onChange={(value) => setFilters({ ...filters, store: value })} options={canChooseStore ? ['全部门店', ...validStoreNames] : [fixedStore]} disabled={!canChooseStore} /></Field>
+      </div>
+      <Table>
+        <thead>
+          <tr>{['员工', '门店', '服务单数', '手工费', '消耗金额', '关联实收'].map((head) => <Th key={head}>{head}</Th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && <tr className="border-t border-pink-50"><Td colSpan={6}><div className="rounded-lg bg-pink-50 px-4 py-6 text-center text-[#8a4964]">暂无手工费数据</div></Td></tr>}
+          {rows.map((item) => (
+            <tr key={`${item.store}-${item.name}`} className="border-t border-pink-50">
+              <Td><b className="text-[#5f263c]">{item.name}</b></Td>
+              <Td>{item.store}</Td>
+              <Td>{item.orders}</Td>
+              <Td><b className="text-[#bd1657]">{money(item.manualAmount)}</b></Td>
+              <Td>{money(item.consumeAmount)}</Td>
+              <Td>{money(item.salesAmount)}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Panel>
+  )
+}
+
+function ProjectStandardLibraryModule({ projectCommissions, projectCommissionError, saveProjectCommission }) {
+  const projects = Array.isArray(projectCommissions) && projectCommissions.length ? projectCommissions : defaultProjectCommissions
+  const [editing, setEditing] = useState(null)
+  const [filters, setFilters] = useState({ category: '全部分类', search: '' })
+  const [toast, setToast] = useState('')
+  const [error, setError] = useState('')
+  const rows = projects.filter((item) => {
+    const categoryMatch = filters.category === '全部分类' || item.category === filters.category
+    const searchMatch = !filters.search || String(item.projectName || '').includes(filters.search)
+    return categoryMatch && searchMatch
+  })
+  const save = async (row) => {
+    setError('')
+    try {
+      await saveProjectCommission(row)
+      setEditing(null)
+      setToast('保存成功')
+      window.setTimeout(() => setToast(''), 1800)
+    } catch (saveError) {
+      setError(saveError.message || '保存失败')
+    }
+  }
+
+  return (
+    <Panel title="项目标准库" subtitle="开单只能选择已启用项目，默认售价、固定手工费和统计规则都从这里带出" action={<PrimaryButton onClick={() => setEditing({ projectName: '', category: 'face', defaultPrice: 0, manualCommission: 0, durationMinutes: '', unit: '次', isCardConsumption: false, isHighEnd: false, includeSaleCommission: true, includeManualCommission: true, isActive: true, defaultPerformanceType: '售前', remark: '' })}>新增项目</PrimaryButton>}>
+      {toast && <Toast>{toast}</Toast>}
+      {(error || projectCommissionError) && <ErrorNotice>{error || projectCommissionError}</ErrorNotice>}
+      <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-2">
+        <Field label="分类筛选"><Select value={filters.category} onChange={(value) => setFilters({ ...filters, category: value })} options={['全部分类', ...projectCategoryOptions]} /></Field>
+        <Field label="搜索项目"><Input value={filters.search} onChange={(value) => setFilters({ ...filters, search: value })} placeholder="输入项目名称" /></Field>
+      </div>
+      <Table>
+        <thead>
+          <tr>{['项目名称', '分类', '默认售价', '固定手工费', '时长', '耗卡', '高端', '销售提成', '手工提成', '状态', '操作'].map((head) => <Th key={head}>{head}</Th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((item) => (
+            <tr key={item.id || item.projectName} className="border-t border-pink-50">
+              <Td><b className="text-[#5f263c]">{item.projectName}</b></Td>
+              <Td>{projectCategoryLabels[item.category] || item.category}</Td>
+              <Td>{money(item.defaultPrice || 0)}</Td>
+              <Td>{money(item.manualCommission || 0)}</Td>
+              <Td>{item.durationMinutes || '-'}{item.durationMinutes ? '分钟' : ''}</Td>
+              <Td><Badge tone={item.isCardConsumption ? 'warning' : 'light'}>{item.isCardConsumption ? '是' : '否'}</Badge></Td>
+              <Td><Badge tone={item.isHighEnd ? 'danger' : 'light'}>{item.isHighEnd ? '是' : '否'}</Badge></Td>
+              <Td><Badge tone={item.includeSaleCommission === false ? 'light' : 'success'}>{item.includeSaleCommission === false ? '否' : '是'}</Badge></Td>
+              <Td><Badge tone={item.includeManualCommission === false ? 'light' : 'success'}>{item.includeManualCommission === false ? '否' : '是'}</Badge></Td>
+              <Td><Badge tone={item.isActive === false ? 'warning' : 'success'}>{item.isActive === false ? '停用' : '启用'}</Badge></Td>
+              <Td><ActionButton onClick={() => setEditing(item)}>编辑</ActionButton></Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      {editing && <ProjectStandardDrawer data={editing} onClose={() => setEditing(null)} onSave={save} />}
+    </Panel>
+  )
+}
+
 function StoreTargetsModule({ performanceReports, cashierOrders, storeTargets, stores, role, profile, storeTargetError, cashierOrderError, saveStoreTarget }) {
   const canChooseStore = isBossRole(role)
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
@@ -2557,6 +2722,42 @@ function FollowupDrawer({ data, customers, employees, stores, profile, lockedSto
   )
 }
 
+function ProjectStandardDrawer({ data, onClose, onSave }) {
+  const [form, setForm] = useState({
+    ...data,
+    category: data.category || 'face',
+    defaultPrice: data.defaultPrice || 0,
+    manualCommission: data.manualCommission || 0,
+    unit: data.unit || '次',
+    defaultPerformanceType: data.defaultPerformanceType || '售前',
+    includeSaleCommission: data.includeSaleCommission !== false,
+    includeManualCommission: data.includeManualCommission !== false,
+    isActive: data.isActive !== false,
+  })
+  const boolOptions = [['true', '是'], ['false', '否']]
+  const updateBool = (key, value) => setForm({ ...form, [key]: value === 'true' })
+
+  return (
+    <Drawer title={form.id ? '编辑项目标准' : '新增项目标准'} onClose={onClose} onSave={() => onSave(form)}>
+      <FormGrid>
+        <Field label="项目名称"><Input value={form.projectName} onChange={(value) => setForm({ ...form, projectName: value })} /></Field>
+        <Field label="项目分类"><Select value={form.category} onChange={(value) => setForm({ ...form, category: value })} options={projectCategoryOptions} /></Field>
+        <Field label="默认售价"><Input type="number" value={form.defaultPrice} onChange={(value) => setForm({ ...form, defaultPrice: value })} /></Field>
+        <Field label="固定手工费"><Input type="number" value={form.manualCommission} onChange={(value) => setForm({ ...form, manualCommission: value })} /></Field>
+        <Field label="项目时长"><Input type="number" value={form.durationMinutes} onChange={(value) => setForm({ ...form, durationMinutes: value })} /></Field>
+        <Field label="计费单位"><Input value={form.unit} onChange={(value) => setForm({ ...form, unit: value })} /></Field>
+        <Field label="是否耗卡"><Select value={String(Boolean(form.isCardConsumption))} onChange={(value) => updateBool('isCardConsumption', value)} options={boolOptions} /></Field>
+        <Field label="是否高端项目"><Select value={String(Boolean(form.isHighEnd))} onChange={(value) => updateBool('isHighEnd', value)} options={boolOptions} /></Field>
+        <Field label="参与销售提成"><Select value={String(form.includeSaleCommission !== false)} onChange={(value) => updateBool('includeSaleCommission', value)} options={boolOptions} /></Field>
+        <Field label="参与手工提成"><Select value={String(form.includeManualCommission !== false)} onChange={(value) => updateBool('includeManualCommission', value)} options={boolOptions} /></Field>
+        <Field label="默认业绩类型"><Select value={form.defaultPerformanceType} onChange={(value) => setForm({ ...form, defaultPerformanceType: value })} options={performanceTypeOptions} /></Field>
+        <Field label="是否启用"><Select value={String(form.isActive !== false)} onChange={(value) => updateBool('isActive', value)} options={boolOptions} /></Field>
+        <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
+      </FormGrid>
+    </Drawer>
+  )
+}
+
 function CashierDrawer({ data, customers, employees, projects, stores, profile, lockedStore, lockedStoreValue, onClose, onSave }) {
   const fixedStore = lockedStore ? normalizeStoreName(lockedStoreValue) || normalizeStoreName(profile?.store) || data.storeName : data.storeName
   const initialItems = cashierOrderItems(data)
@@ -2564,6 +2765,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     ...data,
     orderNo: data.orderNo || generateOrderNo(data.date || todayString()),
     storeName: fixedStore,
+    performanceType: orderPerformanceType(data),
+    remark: remarkWithoutPerformanceType(data.remark),
     orderItems: initialItems.length ? initialItems : [{
       id: `new-${Date.now()}`,
       projectId: '',
@@ -2574,6 +2777,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       discountAmount: 0,
       actualAmount: 0,
       consumeAmount: 0,
+      manualCommission: 0,
+      manualCommissionAmount: 0,
       durationMinutes: '',
     }],
   })
@@ -2603,7 +2808,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
     discountAmount: sum.discountAmount + Number(item.discountAmount || 0),
     actualAmount: sum.actualAmount + Number(item.actualAmount || 0),
     consumeAmount: sum.consumeAmount + Number(item.consumeAmount || 0),
-  }), { originalAmount: 0, discountAmount: 0, actualAmount: 0, consumeAmount: 0 })
+    manualCommissionAmount: sum.manualCommissionAmount + Number(item.manualCommissionAmount || 0),
+  }), { originalAmount: 0, discountAmount: 0, actualAmount: 0, consumeAmount: 0, manualCommissionAmount: 0 })
   const chooseCustomer = (customer) => {
     setForm({
       ...form,
@@ -2631,18 +2837,36 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       const original = Number(next.originalAmount || 0)
       const discount = Number(next.discountAmount || 0)
       if (patch.originalAmount !== undefined || patch.discountAmount !== undefined) next.actualAmount = Math.max(original - discount, 0)
+      const quantity = Number(next.quantity || 0)
+      next.manualCommissionAmount = next.includeManualCommission === false ? 0 : Number(next.manualCommission || 0) * quantity
       return next
     })
     setForm({ ...form, orderItems })
   }
   const chooseProject = (index, value) => {
     const selected = projects.find((item) => String(item.id) === String(value))
-    updateItem(index, {
-      projectId: value,
-      projectName: selected?.projectName || '',
-      projectCategory: selected?.category || '',
-      durationMinutes: selected?.durationMinutes ?? '',
+    const orderItems = form.orderItems.map((item, itemIndex) => {
+      if (itemIndex !== index) return item
+      const quantity = Number(item.quantity || 1)
+      const manualCommission = Number(selected?.manualCommission || 0)
+      const includeManualCommission = selected?.includeManualCommission !== false
+      return {
+        ...item,
+        projectId: value,
+        projectName: selected?.projectName || '',
+        projectCategory: selected?.category || '',
+        originalAmount: selected?.defaultPrice || 0,
+        actualAmount: selected?.defaultPrice || 0,
+        manualCommission,
+        manualCommissionAmount: includeManualCommission ? manualCommission * quantity : 0,
+        includeManualCommission,
+        includeSaleCommission: selected?.includeSaleCommission !== false,
+        isCardConsumption: Boolean(selected?.isCardConsumption),
+        isHighEnd: Boolean(selected?.isHighEnd),
+        durationMinutes: selected?.durationMinutes ?? '',
+      }
     })
+    setForm({ ...form, orderItems, performanceType: selected?.defaultPerformanceType || form.performanceType || '售前' })
   }
   const addItem = () => {
     setForm({
@@ -2657,6 +2881,8 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
         discountAmount: 0,
         actualAmount: 0,
         consumeAmount: 0,
+        manualCommission: 0,
+        manualCommissionAmount: 0,
         durationMinutes: '',
       }],
     })
@@ -2697,7 +2923,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
       setValidationError('请选择开单人。')
       throw new Error('请选择开单人。')
     }
-    return onSave({ ...form, orderItems, ...totals })
+    return onSave({ ...form, orderItems, ...totals, remark: remarkWithPerformanceType(form.performanceType, form.remark) })
   }
 
   return (
@@ -2764,11 +2990,19 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
                 </div>
                 <div className="min-w-[120px]"><Field label="数量"><Input type="number" value={item.quantity} onChange={(value) => updateItem(index, { quantity: value })} /></Field></div>
                 <div className="min-w-[120px]"><Field label="项目时长"><Input value={item.durationMinutes || ''} onChange={() => {}} /></Field></div>
-                <div className="min-w-[120px]"><Field label="原价"><Input type="number" value={item.originalAmount} onChange={(value) => updateItem(index, { originalAmount: value })} /></Field></div>
-                <div className="min-w-[120px]"><Field label="优惠金额"><Input type="number" value={item.discountAmount} onChange={(value) => updateItem(index, { discountAmount: value })} /></Field></div>
+                <div className="min-w-[120px]"><Field label="默认售价"><Input type="number" value={item.originalAmount} onChange={(value) => updateItem(index, { originalAmount: value })} /></Field></div>
                 <div className="min-w-[120px]"><Field label="实收金额"><Input type="number" value={item.actualAmount} onChange={(value) => updateItem(index, { actualAmount: value })} /></Field></div>
                 <div className="min-w-[120px]"><Field label="消耗金额"><Input type="number" value={item.consumeAmount} onChange={(value) => updateItem(index, { consumeAmount: value })} /></Field></div>
-                <div className="min-w-[120px]"><Field label="项目分类"><Input value={item.projectCategory || ''} onChange={() => {}} /></Field></div>
+                <div className="min-w-[120px]"><Field label="固定手工费"><Input value={money(item.manualCommissionAmount || 0)} onChange={() => {}} /></Field></div>
+                <div className="min-w-[120px]"><Field label="项目分类"><Input value={projectCategoryLabels[item.projectCategory] || item.projectCategory || ''} onChange={() => {}} /></Field></div>
+                <div className="md:col-span-2 xl:col-span-4">
+                  <div className="flex flex-wrap gap-2 text-xs font-bold text-[#8a4964]">
+                    <Badge tone={item.isCardConsumption ? 'warning' : 'light'}>{item.isCardConsumption ? '耗卡项目' : '不耗卡'}</Badge>
+                    <Badge tone={item.isHighEnd ? 'danger' : 'light'}>{item.isHighEnd ? '高端项目' : '普通项目'}</Badge>
+                    <Badge tone={item.includeSaleCommission === false ? 'light' : 'success'}>{item.includeSaleCommission === false ? '不计销售业绩' : '计销售业绩'}</Badge>
+                    <Badge tone={item.includeManualCommission === false ? 'light' : 'success'}>{item.includeManualCommission === false ? '不计手工费' : '计手工费'}</Badge>
+                  </div>
+                </div>
               </div>
             </div>
           ))}
@@ -2781,6 +3015,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
           <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={salesEmployeeOptions.length ? [['', '请选择开单人'], ...salesEmployeeOptions] : [['', '暂无可选开单人员，请先到员工管理添加店长/顾问/总监/管理员/区域经理']]} /></Field>
           <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...consultantOptions]} /></Field>
           <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
+          <Field label="业绩类型"><Select value={form.performanceType} onChange={(value) => setForm({ ...form, performanceType: value })} options={performanceTypeOptions} /></Field>
           <Field label="备注" full><Textarea value={form.remark} onChange={(value) => setForm({ ...form, remark: value })} /></Field>
         </FormGrid>
       </div>
@@ -2789,6 +3024,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, profile, 
         <FormGrid>
         <Field label="订单总实收"><Input value={money(totals.actualAmount)} onChange={() => {}} /></Field>
         <Field label="订单总消耗"><Input value={money(totals.consumeAmount)} onChange={() => {}} /></Field>
+        <Field label="订单总手工费"><Input value={money(totals.manualCommissionAmount)} onChange={() => {}} /></Field>
         </FormGrid>
       </div>
     </Drawer>

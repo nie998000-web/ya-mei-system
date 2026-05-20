@@ -1,13 +1,11 @@
 export const menuPermissions = {
   dashboard: ['admin', 'boss', 'manager'],
+  cashier: ['admin', 'boss', 'manager'],
   customers: ['admin', 'boss', 'manager'],
   activation: ['admin', 'boss', 'manager'],
-  cashier: ['admin', 'boss', 'manager'],
-  reviews: ['admin', 'boss', 'manager'],
-  storeTargets: ['admin', 'boss', 'manager'],
-  performanceReports: ['admin', 'boss', 'manager'],
   performanceMonthly: ['admin', 'boss', 'manager'],
-  employees: ['admin', 'boss', 'manager'],
+  handworkSettlement: ['admin', 'boss', 'manager'],
+  projectCommissions: ['admin', 'boss', 'manager'],
 }
 
 export const sensitiveRoutes = {
@@ -22,12 +20,10 @@ export const sensitiveRoutes = {
 
 export const menuLabels = {
   dashboard: '首页看板',
+  cashier: '今日收银台',
   customers: '顾客管理',
   activation: '未到店激活',
-  cashier: '开单收银',
-  reviews: '每日复盘',
-  storeTargets: '门店目标',
-  performanceReports: '员工业绩日报',
   performanceMonthly: '员工业绩月报',
-  employees: '员工管理',
+  handworkSettlement: '手工费结算',
+  projectCommissions: '项目标准库',
 }
