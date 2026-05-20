@@ -2819,7 +2819,11 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   const [validationError, setValidationError] = useState('')
   const selectedStoreName = normalizeStoreName(form.storeName)
   const currentStoreId = form.storeId || storeIdByName(selectedStoreName)
-  const recordBelongsToCurrentStore = (record) => isUuid(currentStoreId) && String(record.storeId || record.store_id || '') === String(currentStoreId)
+  const recordBelongsToCurrentStore = (record) => {
+    const recordStoreId = record.storeId || record.store_id || ''
+    if (isUuid(currentStoreId) && isUuid(recordStoreId)) return String(recordStoreId) === String(currentStoreId)
+    return normalizeRecordStore(record) === selectedStoreName
+  }
   const staffInStore = employees
     .filter((item) => recordBelongsToCurrentStore(item))
   const staffOptionsByRoles = (roles) => staffInStore

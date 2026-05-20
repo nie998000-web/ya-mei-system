@@ -64,10 +64,12 @@ const profileSelectFields = 'id,user_id,name,role,store,created_at'
 const customerSelectFields = 'id,name,phone,age,birthday,store_id,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
 const customerLegacySelectFields = 'id,name,phone,age,birthday,store,owner,level,last_visit,follow_status,last_follow_result,last_follow_time,next_follow_time,follow_note,today_task_completed_at,created_at'
 const employeeSelectFields = 'id,name,phone,store_id,store,role,note,entry_date,is_active,created_at,updated_at'
+const employeeLegacySelectFields = 'id,name,phone,store,role,note,entry_date,is_active,created_at,updated_at'
 const employeeDailyStatSelectFields = 'id,date,employee_id,employee_name,phone,store,role,followups,appointments,arrivals,deals,sales,note,created_at,updated_at'
 const performanceReportSelectFields = 'id,date,store,employee,arrivals,service_sales,consume_sales,cash_sales,new_customers,repeat_customers,upsell_amount,total_sales,unit_price,created_at,updated_at'
 const performanceRecordSelectFields = 'id,date,month,store_id,store_name,customer_id,customer_name,project_id,project_name,project_category,amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,quantity,remark,created_at,updated_at'
 const cashierOrderSelectFields = 'id,order_no,date,month,store_id,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,remark,status,created_at,updated_at'
+const cashierOrderLegacySelectFields = 'id,order_no,date,month,store_name,customer_id,customer_name,customer_phone,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,payment_type,service_employee_id,service_employee_name,sales_employee_id,sales_employee_name,consultant_id,consultant_name,remark,status,created_at,updated_at'
 const cashierOrderItemSelectFields = 'id,order_id,project_id,project_name,project_category,quantity,original_amount,discount_amount,actual_amount,consume_amount,manual_commission,manual_commission_amount,duration_minutes,created_at'
 const projectCommissionSelectFields = 'id,project_name,category,manual_commission,duration_minutes,unit,is_active,remark,created_at,updated_at'
 const storeTargetSelectFields = 'id,month,store,monthly_target,daily_target,current_sales,completion_rate,remaining_amount,created_at'
@@ -360,47 +362,62 @@ export function useCloudData(session) {
     if (!supabase || !profileData) return false
     setEmployeeError('')
 
-    try {
+    const runEmployeeQuery = async ({ useStoreId }) => {
       let query = supabase
         .from('employees')
-        .select(employeeSelectFields)
+        .select(useStoreId ? employeeSelectFields : employeeLegacySelectFields)
 
       if (!isBossRole(profileData.role)) {
-        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
+        query = useStoreId && isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
       }
       if (isBeauticianRole(profileData.role) && profileData.name) query = query.eq('name', profileData.name)
+      return query
+    }
 
-      const { data, error: employeesError } = await query
+    try {
+      let { data, error: employeesError } = await runEmployeeQuery({ useStoreId: true })
+
+      if (employeesError && isMissingColumnError(employeesError, 'store_id')) {
+        console.warn('employees.store_id 不存在，临时按 employees.store 读取。', employeesError)
+        const fallback = await runEmployeeQuery({ useStoreId: false })
+        data = fallback.data
+        employeesError = fallback.error
+      }
 
       if (employeesError) {
         const message = errorMessage(employeesError)
         console.error('employees 查询失败:', employeesError)
         setEmployeeError(message)
-        setError(message)
         setEmployees([])
         return false
       }
 
       const storeById = storeByIdFromRows(activeStoreRows)
       let mappedEmployees = (data || []).map((row) => fromEmployee(row, storeById))
-      const seedStores = (isBossRole(profileData.role) ? activeStoreRows : activeStoreRows.filter((store) => String(store.id) === String(profileData.storeId)))
-        .filter((store) => isUuid(store.id) && fixedStores.includes(normalizeStoreName(store.name)))
+      const seedStores = (isBossRole(profileData.role) ? activeStoreRows : activeStoreRows.filter((store) => String(store.id) === String(profileData.storeId) || normalizeStoreName(store.name) === profileStore(profileData)))
+        .filter((store) => fixedStores.includes(normalizeStoreName(store.name)))
       const seedPayloads = seedStores.flatMap((storeRow) => {
         const store = normalizeStoreName(storeRow.name)
-        const storeEmployees = mappedEmployees.filter((item) => String(item.storeId) === String(storeRow.id))
+        const storeEmployees = mappedEmployees.filter((item) => String(item.storeId) === String(storeRow.id) || normalizeStoreName(item.store) === store)
         const hasManager = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'manager')
         const hasConsultant = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'consultant')
         const hasBeautician = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'beautician')
-        return defaultEmployeesForStore(store, storeRow.id).filter((item) => (
+        return defaultEmployeesForStore(store, isUuid(storeRow.id) ? storeRow.id : null).filter((item) => (
           (item.role === 'manager' && !hasManager) || (item.role === 'consultant' && !hasConsultant) || (item.role === 'beautician' && !hasBeautician)
         ))
       })
 
       if (seedPayloads.length > 0) {
-        const { data: seededEmployees, error: seedError } = await supabase
+        let { data: seededEmployees, error: seedError } = await supabase
           .from('employees')
           .insert(seedPayloads)
           .select(employeeSelectFields)
+        if (seedError && isMissingColumnError(seedError, 'store_id')) {
+          ;({ data: seededEmployees, error: seedError } = await supabase
+            .from('employees')
+            .insert(seedPayloads.map(withoutStoreId))
+            .select(employeeLegacySelectFields))
+        }
         if (seedError) {
           console.error('employees 初始化默认员工失败:', seedError)
           setEmployeeError(errorMessage(seedError))
@@ -421,12 +438,10 @@ export function useCloudData(session) {
 
       const { data: statsData, error: statsError } = await statsQuery
       if (statsError) {
-        const message = errorMessage(statsError)
         console.error('employee_daily_stats 查询失败:', statsError)
-        setEmployeeError(message)
-        setError(message)
+        setEmployeeError(errorMessage(statsError))
         setEmployees(mergeTodayStats(mappedEmployees, []))
-        return false
+        return true
       }
 
       setEmployees(mergeTodayStats(mappedEmployees, statsData || []))
@@ -435,7 +450,6 @@ export function useCloudData(session) {
       const message = errorMessage(employeesError)
       console.error('employees 查询异常:', employeesError)
       setEmployeeError(message)
-      setError(message)
       setEmployees([])
       return false
     }
@@ -557,21 +571,32 @@ export function useCloudData(session) {
     if (!supabase || !profileData) return false
     setCashierOrderError('')
 
-    try {
+    const runCashierQuery = async ({ useStoreId }) => {
       let query = supabase
         .from('cashier_orders')
-        .select(cashierOrderSelectFields)
+        .select(useStoreId ? cashierOrderSelectFields : cashierOrderLegacySelectFields)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })
 
       if (!isBossRole(profileData.role)) {
-        query = isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
+        query = useStoreId && isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
       }
       if (isBeauticianRole(profileData.role) && profileData.name) {
         query = query.or(`service_employee_name.eq.${profileData.name},sales_employee_name.eq.${profileData.name},consultant_name.eq.${profileData.name}`)
       }
+      return query
+    }
 
-      const { data, error: ordersError } = await query
+    try {
+      let { data, error: ordersError } = await runCashierQuery({ useStoreId: true })
+
+      if (ordersError && isMissingColumnError(ordersError, 'store_id')) {
+        console.warn('cashier_orders.store_id 不存在，临时按 cashier_orders.store_name 读取。', ordersError)
+        const fallback = await runCashierQuery({ useStoreId: false })
+        data = fallback.data
+        ordersError = fallback.error
+      }
+
       if (ordersError) {
         const message = errorMessage(ordersError)
         console.error('cashier_orders 查询失败:', ordersError)
