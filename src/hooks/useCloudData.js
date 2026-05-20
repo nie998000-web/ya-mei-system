@@ -15,7 +15,7 @@ import {
   fromProjectCommission,
   fromReview,
   fromStoreTarget,
-  isUuid,
+  isDbId,
   normalizeStoreName,
   toEmployee,
   toCashierOrder,
@@ -186,7 +186,7 @@ async function ensureFixedStores() {
 }
 
 async function ensureStoreBoundMasterData(rows) {
-  const validRows = (rows || []).filter((store) => isUuid(store.id) && fixedStores.includes(normalizeStoreName(store.name)))
+  const validRows = (rows || []).filter((store) => isDbId(store.id) && fixedStores.includes(normalizeStoreName(store.name)))
   await Promise.all(validRows.flatMap((store) => [
     supabase.from('customers').update({ store_id: store.id, store: normalizeStoreName(store.name) }).eq('store', normalizeStoreName(store.name)).is('store_id', null),
     supabase.from('employees').update({ store_id: store.id, store: normalizeStoreName(store.name) }).eq('store', normalizeStoreName(store.name)).is('store_id', null),
@@ -215,6 +215,11 @@ function customerSchemaError(error) {
 function isMissingColumnError(error, columnName) {
   const message = String(error?.message || error?.details || '').toLowerCase()
   return message.includes(columnName.toLowerCase()) && /does not exist|schema cache|could not find|column/.test(message)
+}
+
+function isStoreIdCompatibilityError(error) {
+  const message = String(error?.message || error?.details || error?.hint || '').toLowerCase()
+  return message.includes('store_id') && /(uuid|bigint|operator does not exist|invalid input syntax|cannot cast|foreign key|constraint)/.test(message)
 }
 
 function withoutStoreId(payload) {
@@ -283,7 +288,7 @@ export function useCloudData(session) {
         .order('name', { ascending: true })
 
       if (shouldFilterByStore(profileData)) {
-        query = useStoreId && isUuid(profileData.storeId)
+        query = useStoreId && isDbId(profileData.storeId)
           ? query.eq('store_id', profileData.storeId)
           : query.eq('store', profileStore(profileData))
       }
@@ -294,8 +299,8 @@ export function useCloudData(session) {
     try {
       let { data, error: customersError } = await runCustomerQuery({ useStoreId: true })
 
-      if (customersError && isMissingColumnError(customersError, 'store_id')) {
-        console.warn('customers.store_id 不存在，临时按 customers.store 读取。请执行 supabase/customers_store_id_uuid.sql 完成字段统一。', customersError)
+      if (customersError && (isMissingColumnError(customersError, 'store_id') || isStoreIdCompatibilityError(customersError))) {
+        console.warn('customers.store_id 不可用，临时按 customers.store 读取。请执行 supabase/store_id_bigint_compat.sql 完成字段统一。', customersError)
         const fallback = await runCustomerQuery({ useStoreId: false })
         data = fallback.data
         customersError = fallback.error
@@ -368,7 +373,7 @@ export function useCloudData(session) {
         .select(useStoreId ? employeeSelectFields : employeeLegacySelectFields)
 
       if (!isBossRole(profileData.role)) {
-        query = useStoreId && isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
+        query = useStoreId && isDbId(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store', profileStore(profileData))
       }
       if (isBeauticianRole(profileData.role) && profileData.name) query = query.eq('name', profileData.name)
       return query
@@ -377,8 +382,8 @@ export function useCloudData(session) {
     try {
       let { data, error: employeesError } = await runEmployeeQuery({ useStoreId: true })
 
-      if (employeesError && isMissingColumnError(employeesError, 'store_id')) {
-        console.warn('employees.store_id 不存在，临时按 employees.store 读取。', employeesError)
+      if (employeesError && (isMissingColumnError(employeesError, 'store_id') || isStoreIdCompatibilityError(employeesError))) {
+        console.warn('employees.store_id 不可用，临时按 employees.store 读取。', employeesError)
         const fallback = await runEmployeeQuery({ useStoreId: false })
         data = fallback.data
         employeesError = fallback.error
@@ -402,7 +407,7 @@ export function useCloudData(session) {
         const hasManager = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'manager')
         const hasConsultant = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'consultant')
         const hasBeautician = storeEmployees.some((item) => String(item.role || '').toLowerCase() === 'beautician')
-        return defaultEmployeesForStore(store, isUuid(storeRow.id) ? storeRow.id : null).filter((item) => (
+        return defaultEmployeesForStore(store, isDbId(storeRow.id) ? storeRow.id : null).filter((item) => (
           (item.role === 'manager' && !hasManager) || (item.role === 'consultant' && !hasConsultant) || (item.role === 'beautician' && !hasBeautician)
         ))
       })
@@ -412,7 +417,7 @@ export function useCloudData(session) {
           .from('employees')
           .insert(seedPayloads)
           .select(employeeSelectFields)
-        if (seedError && isMissingColumnError(seedError, 'store_id')) {
+        if (seedError && (isMissingColumnError(seedError, 'store_id') || isStoreIdCompatibilityError(seedError))) {
           ;({ data: seededEmployees, error: seedError } = await supabase
             .from('employees')
             .insert(seedPayloads.map(withoutStoreId))
@@ -579,7 +584,7 @@ export function useCloudData(session) {
         .order('created_at', { ascending: false })
 
       if (!isBossRole(profileData.role)) {
-        query = useStoreId && isUuid(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
+        query = useStoreId && isDbId(profileData.storeId) ? query.eq('store_id', profileData.storeId) : query.eq('store_name', profileStore(profileData))
       }
       if (isBeauticianRole(profileData.role) && profileData.name) {
         query = query.or(`service_employee_name.eq.${profileData.name},sales_employee_name.eq.${profileData.name},consultant_name.eq.${profileData.name}`)
@@ -590,8 +595,8 @@ export function useCloudData(session) {
     try {
       let { data, error: ordersError } = await runCashierQuery({ useStoreId: true })
 
-      if (ordersError && isMissingColumnError(ordersError, 'store_id')) {
-        console.warn('cashier_orders.store_id 不存在，临时按 cashier_orders.store_name 读取。', ordersError)
+      if (ordersError && (isMissingColumnError(ordersError, 'store_id') || isStoreIdCompatibilityError(ordersError))) {
+        console.warn('cashier_orders.store_id 不可用，临时按 cashier_orders.store_name 读取。', ordersError)
         const fallback = await runCashierQuery({ useStoreId: false })
         data = fallback.data
         ordersError = fallback.error
@@ -871,8 +876,8 @@ export function useCloudData(session) {
       ? supabase.from('customers').update(nextPayload).eq('id', row.id).select(selectFields).single()
       : supabase.from('customers').insert([nextPayload]).select(selectFields).single()
     let { data, error: saveError } = await saveRequest(payload, customerSelectFields)
-    if (saveError && isMissingColumnError(saveError, 'store_id')) {
-      console.warn('customers.store_id 不存在，顾客保存临时不写 store_id。请执行 supabase/customers_store_id_uuid.sql。', saveError)
+    if (saveError && (isMissingColumnError(saveError, 'store_id') || isStoreIdCompatibilityError(saveError))) {
+      console.warn('customers.store_id 不可用，顾客保存临时不写 store_id。请执行 supabase/store_id_bigint_compat.sql。', saveError)
       ;({ data, error: saveError } = await saveRequest(withoutStoreId(payload), customerLegacySelectFields))
     }
     if (saveError) throw new Error(customerSchemaError(saveError))
@@ -928,7 +933,7 @@ export function useCloudData(session) {
         .from('customers')
         .update(payload)
         .eq('id', id)
-      if (updateError && isMissingColumnError(updateError, 'store_id')) {
+      if (updateError && (isMissingColumnError(updateError, 'store_id') || isStoreIdCompatibilityError(updateError))) {
         ;({ error: updateError } = await supabase
           .from('customers')
           .update(withoutStoreId(payload))
@@ -941,7 +946,7 @@ export function useCloudData(session) {
       let { error: insertError } = await supabase
         .from('customers')
         .insert(insertRows)
-      if (insertError && isMissingColumnError(insertError, 'store_id')) {
+      if (insertError && (isMissingColumnError(insertError, 'store_id') || isStoreIdCompatibilityError(insertError))) {
         ;({ error: insertError } = await supabase
           .from('customers')
           .insert(insertRows.map(withoutStoreId)))
@@ -1059,7 +1064,7 @@ export function useCloudData(session) {
       row.serviceEmployeeId,
       row.salesEmployeeId,
       row.consultantId || null,
-    ].filter((value) => value && !isUuid(value))
+    ].filter((value) => value && !isDbId(value))
     if (invalidUuidPayload.length > 0) {
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
@@ -1074,7 +1079,7 @@ export function useCloudData(session) {
         .select('id')
         .eq('name', storeName)
         .maybeSingle()
-      if (!storeError && isUuid(storeRow?.id)) payload.store_id = storeRow.id
+      if (!storeError && isDbId(storeRow?.id)) payload.store_id = storeRow.id
     }
     if (!payload.store_id) {
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
@@ -1084,14 +1089,14 @@ export function useCloudData(session) {
       payload.sales_employee_name = profile.name
     }
     console.log('cashier submit payload', payload)
-    const request = row.id && isUuid(row.id)
+    const request = row.id && isDbId(row.id)
       ? supabase.from('cashier_orders').update(payload).eq('id', row.id).select(cashierOrderSelectFields).single()
       : supabase.from('cashier_orders').insert(payload).select(cashierOrderSelectFields).single()
     const { data, error: saveError } = await request
     if (saveError) throw new Error(errorMessage(saveError))
     const orderItems = Array.isArray(row.orderItems) && row.orderItems.length ? row.orderItems : []
-    if (data?.id && isUuid(data.id) && orderItems.length > 0) {
-      const invalidItemIds = orderItems.map((item) => item.projectId).filter((value) => value && !isUuid(value))
+    if (data?.id && isDbId(data.id) && orderItems.length > 0) {
+      const invalidItemIds = orderItems.map((item) => item.projectId).filter((value) => value && !isDbId(value))
       if (invalidItemIds.length > 0) throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
       const { error: deleteItemsError } = await supabase
         .from('cashier_order_items')

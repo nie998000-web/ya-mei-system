@@ -9,7 +9,7 @@ import {
 import { defaultProjectCommissions } from './data/salarySeedData'
 import { menuLabels, menuPermissions, sensitiveRoutes } from './config/menuPermissions'
 import { canManage, useCloudData } from './hooks/useCloudData'
-import { cashierOrderToPerformanceRecord, isUuid, normalizeStoreName, validStoreNames } from './lib/mappers'
+import { cashierOrderToPerformanceRecord, isDbId, normalizeStoreName, validStoreNames } from './lib/mappers'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import { ageFromBirthday, daysSince, normalizeDateInput, percent, todayString } from './utils/date'
 import { money } from './utils/format'
@@ -1692,8 +1692,8 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const standardProjects = Array.isArray(projectCommissions) ? projectCommissions : []
-  const activeProjectOptions = standardProjects.filter((item) => item.isActive !== false && isUuid(item.id))
-  const activeEmployeeOptions = (Array.isArray(employees) ? employees : []).filter((item) => item.isActive !== false && isUuid(item.id))
+  const activeProjectOptions = standardProjects.filter((item) => item.isActive !== false && isDbId(item.id))
+  const activeEmployeeOptions = (Array.isArray(employees) ? employees : []).filter((item) => item.isActive !== false && isDbId(item.id))
   const activeOrders = (Array.isArray(cashierOrders) ? cashierOrders : []).filter((item) => item.status !== 'voided')
   const visibleOrders = activeOrders.filter((item) => {
     const storeMatch = filters.store === '全部门店' || normalizeStoreName(item.storeName || item.store) === filters.store
@@ -2821,13 +2821,13 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   const currentStoreId = form.storeId || storeIdByName(selectedStoreName)
   const recordBelongsToCurrentStore = (record) => {
     const recordStoreId = record.storeId || record.store_id || ''
-    if (isUuid(currentStoreId) && isUuid(recordStoreId)) return String(recordStoreId) === String(currentStoreId)
+    if (isDbId(currentStoreId) && isDbId(recordStoreId)) return String(recordStoreId) === String(currentStoreId)
     return normalizeRecordStore(record) === selectedStoreName
   }
   const staffInStore = employees
     .filter((item) => recordBelongsToCurrentStore(item))
   const staffOptionsByRoles = (roles) => staffInStore
-    .filter((item) => isUuid(item.id))
+    .filter((item) => isDbId(item.id))
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
   const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
@@ -2835,7 +2835,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
   const storeCustomers = customers
-    .filter((customer) => isUuid(customer.id) && recordBelongsToCurrentStore(customer))
+    .filter((customer) => isDbId(customer.id) && recordBelongsToCurrentStore(customer))
     .sort((a, b) => String(b.lastVisit || b.createdAt || '').localeCompare(String(a.lastVisit || a.createdAt || '')))
   const customerResults = storeCustomers
     .filter((item) => {
@@ -2854,7 +2854,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   const projectById = new Map(projects.map((project) => [String(project.id), project]))
   const selectedOrderItems = form.orderItems.filter((item) => item.projectId || item.projectName)
   const hasValidItems = selectedOrderItems.length > 0 && selectedOrderItems.every((item) => (
-    isUuid(item.projectId)
+    isDbId(item.projectId)
     && projectById.get(String(item.projectId))?.isActive !== false
     && Number(item.quantity || 0) > 0
     && Number(item.originalAmount || 0) >= 0
@@ -2864,12 +2864,12 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   ))
   const selectedCustomer = storeCustomers.find((customer) => String(customer.id) === String(form.customerId))
   const canSubmitCashierOrder = Boolean(
-    isUuid(form.customerId)
+    isDbId(form.customerId)
     && selectedCustomer
     && hasValidItems
-    && isUuid(form.serviceEmployeeId)
-    && isUuid(form.salesEmployeeId)
-    && (!form.consultantId || isUuid(form.consultantId)),
+    && isDbId(form.serviceEmployeeId)
+    && isDbId(form.salesEmployeeId)
+    && (!form.consultantId || isDbId(form.consultantId)),
   )
   useEffect(() => {
     console.log('currentStoreId', currentStoreId)
@@ -2921,7 +2921,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
       const includeManualCommission = selected?.includeManualCommission !== false
       return {
         ...item,
-        projectId: isUuid(value) ? value : '',
+        projectId: isDbId(value) ? value : '',
         projectName: selected?.projectName || '',
         projectCategory: selected?.category || '',
         originalAmount: selected?.defaultPrice || 0,
@@ -2961,7 +2961,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
   }
   const chooseEmployee = (fieldId, fieldName, value) => {
     const employee = employees.find((item) => String(item.id) === String(value))
-    setForm({ ...form, [fieldId]: isUuid(value) ? value : '', [fieldName]: employee?.name || '' })
+    setForm({ ...form, [fieldId]: isDbId(value) ? value : '', [fieldName]: employee?.name || '' })
   }
   const validateAndSave = () => {
     setValidationError('')
@@ -2974,7 +2974,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
       setValidationError('顾客不属于当前门店，请重新选择顾客')
       throw new Error('顾客不属于当前门店，请重新选择顾客')
     }
-    if (!isUuid(form.customerId) || !isUuid(currentStoreId)) {
+    if (!isDbId(form.customerId) || !isDbId(currentStoreId)) {
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
@@ -2987,7 +2987,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
       setValidationError(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
       throw new Error(`第 ${invalidIndex + 1} 个项目未选择项目名称，或数量不是大于 0 的数字。`)
     }
-    if (orderItems.some((item) => !isUuid(item.projectId))) {
+    if (orderItems.some((item) => !isDbId(item.projectId))) {
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
@@ -3014,7 +3014,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
       setValidationError('请选择开单人。')
       throw new Error('请选择开单人。')
     }
-    if (!isUuid(form.serviceEmployeeId) || !isUuid(form.salesEmployeeId) || (form.consultantId && !isUuid(form.consultantId))) {
+    if (!isDbId(form.serviceEmployeeId) || !isDbId(form.salesEmployeeId) || (form.consultantId && !isDbId(form.consultantId))) {
       setValidationError('请选择正确的顾客、门店、项目、操作老师和开单人')
       throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
     }
