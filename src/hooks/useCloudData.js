@@ -329,6 +329,7 @@ function withoutNonUuidForeignIds(payload) {
   const next = { ...(payload || {}) }
   ;[
     'store_id',
+    'order_id',
     'customer_id',
     'project_id',
     'service_employee_id',
@@ -1268,7 +1269,11 @@ export function useCloudData(session) {
         .from('cashier_order_items')
         .delete()
         .eq('order_id', data.id)
-      if (deleteItemsError) throw new Error(errorMessage(deleteItemsError))
+      if (deleteItemsError && isInvalidUuidPayloadError(deleteItemsError)) {
+        console.warn('cashier_order_items.order_id 是 uuid，但当前订单 id 是数字，已跳过旧明细清理。', deleteItemsError)
+      } else if (deleteItemsError) {
+        throw new Error(errorMessage(deleteItemsError))
+      }
       const itemPayloads = orderItems.map((item) => toCashierOrderItem(item, data.id))
       let { error: insertItemsError } = await supabase
         .from('cashier_order_items')
