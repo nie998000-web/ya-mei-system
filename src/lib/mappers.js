@@ -37,6 +37,14 @@ function dbIdOrNull(value) {
   return /^\d+$/.test(text) ? Number(text) : text
 }
 
+function toBoolean(value, fallback = false) {
+  if (value === true || value === false) return value
+  const text = String(value ?? '').trim().toLowerCase()
+  if (['true', '1', 'yes', 'y', '新客', '是'].includes(text)) return true
+  if (['false', '0', 'no', 'n', '否', '老客'].includes(text)) return false
+  return fallback
+}
+
 export function fromCustomer(row, storeById = new Map()) {
   const storeId = row.store_id || row.storeId || row.current_store_id || row.shop_id || row.branch_id || ''
   const rawStore = storeById.get(String(storeId)) || row.store || row.store_name || row.branch || row.shopName || row.shop_name || ''
@@ -47,7 +55,7 @@ export function fromCustomer(row, storeById = new Map()) {
     phone: String(row.phone ?? row.mobile ?? row.customer_phone ?? row.tel ?? ''),
     age: row.age ?? '',
     birthday: row.birthday ?? row.birth_date ?? row.birthDate ?? '',
-    isNewCustomer: Boolean(row.is_new_customer ?? row.isNewCustomer ?? false),
+    isNewCustomer: toBoolean(row.is_new_customer ?? row.isNewCustomer, false),
     storeId,
     store: storeName,
     owner: String(row.owner ?? row.beautician ?? row.staff_name ?? row.employee_name ?? row.owner_name ?? row.responsible_staff ?? ''),
@@ -59,6 +67,8 @@ export function fromCustomer(row, storeById = new Map()) {
     followStatus: row.follow_status || row.last_follow_result || '未联系',
     followNote: row.follow_note || row.note || '',
     todayTaskCompletedAt: row.today_task_completed_at || '',
+    createdAt: row.created_at || row.createdAt || '',
+    updatedAt: row.updated_at || row.updatedAt || '',
   }
 }
 

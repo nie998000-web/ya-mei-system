@@ -1036,6 +1036,7 @@ export function useCloudData(session) {
       owner: isBeauticianRole(profile?.role) ? profile.name : row.owner ?? '',
       level: row.level || '',
       last_visit: row.lastVisit || null,
+      is_new_customer: row.isNewCustomer !== false,
     }
     const saveRequest = (nextPayload, selectFields) => row.id
       ? supabase.from('customers').update(nextPayload).eq('id', row.id).select(selectFields).single()
@@ -1044,6 +1045,11 @@ export function useCloudData(session) {
     if (saveError && (isMissingColumnError(saveError, 'store_id') || isStoreIdCompatibilityError(saveError))) {
       console.warn('customers.store_id 不可用，顾客保存临时不写 store_id。请执行 supabase/store_id_bigint_compat.sql。', saveError)
       ;({ data, error: saveError } = await saveRequest(withoutStoreId(payload), customerLegacySelectFields))
+    }
+    if (saveError && isMissingColumnError(saveError, 'is_new_customer')) {
+      const { is_new_customer, ...payloadWithoutNewCustomerFlag } = withoutStoreId(payload)
+      console.warn('customers.is_new_customer 字段不存在，已临时按创建日期统计今日新客。建议后续添加 is_new_customer boolean 字段。', saveError)
+      ;({ data, error: saveError } = await saveRequest(payloadWithoutNewCustomerFlag, customerLegacySelectFields))
     }
     if (saveError) throw new Error(customerSchemaError(saveError))
     if ((payload.owner || '') !== (data?.owner || '')) {

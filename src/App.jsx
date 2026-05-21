@@ -309,6 +309,7 @@ const emptyCustomer = {
   phone: '',
   age: '',
   birthday: '',
+  isNewCustomer: true,
   store: '龙泉1店',
   owner: '',
   level: 'B客',
@@ -468,7 +469,7 @@ function useLocalFallbackCloud() {
   const noopRefresh = async () => {}
 
   const saveCustomer = async (row) => {
-    const next = { ...row, id: row.id || Date.now(), store: normalizeStoreName(row.store) || defaultStores[0] }
+    const next = { ...row, id: row.id || Date.now(), store: normalizeStoreName(row.store) || defaultStores[0], isNewCustomer: row.isNewCustomer !== false, createdAt: row.createdAt || new Date().toISOString() }
     setCustomers((list) => row.id ? list.map((item) => (item.id === row.id ? next : item)) : [next, ...list])
   }
   const deleteCustomer = async (id) => setCustomers((list) => list.filter((item) => item.id !== id))
@@ -977,9 +978,16 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
   const todayCustomerKeys = unique(todayOrders.map(customerKeyOfOrder))
   const todayRevenue = todayOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0)
   const todayArrivals = todayCustomerKeys.length
-  const todayNewCustomers = unique(todayOrders
-    .filter((order) => customerById.get(String(order.customerId))?.isNewCustomer)
-    .map(customerKeyOfOrder)).length
+  const todayCreatedNewCustomerKeys = viewCustomers
+    .filter((customer) => formatDateOnly(customer.createdAt) === today)
+    .map((customer) => String(customer.id || customer.phone || customer.name))
+  const todayOrderNewCustomerKeys = todayOrders
+    .filter((order) => {
+      const customer = customerById.get(String(order.customerId))
+      return Boolean(customer?.isNewCustomer || formatDateOnly(customer?.createdAt) === today)
+    })
+    .map(customerKeyOfOrder)
+  const todayNewCustomers = unique([...todayCreatedNewCustomerKeys, ...todayOrderNewCustomerKeys]).length
   const followupInScope = (item) => {
     const store = normalizeStoreName(item.store)
     if (isBoss) return !filterByDashboardStore || store === dashboardStoreName
@@ -1104,7 +1112,7 @@ function Dashboard({ customers, employees, followups, cashierOrders, stores, rol
   const cards = [
     ['今日总业绩', money(todayRevenue), '', '来自开单收银'],
     ['今日到店人数', todayArrivals, '人', '按开单顾客去重'],
-    ['今日新客人数', todayNewCustomers, '人', '来自顾客新客标记'],
+    ['今日新客人数', todayNewCustomers, '人', '今日新增顾客 + 新客标记'],
     ['今日预约人数', todayAppointments, '人', '来自今日跟进'],
     ['今日回店率', todayReturnRate, '', '到店 / 预约'],
     ['今日客单价', money(todayUnitPrice), '', '业绩 / 到店人数'],
@@ -1329,7 +1337,7 @@ function CustomersModule({ customers, stores, storeRecords = [], profile, role, 
           <SecondaryButton onClick={() => importInputRef.current?.click()}>批量导入</SecondaryButton>
           <PrimaryButton onClick={() => {
             setFilters(defaultCustomerFilters())
-            setEditing({ name: '', phone: '', age: '', birthday: '', store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '', level: '', lastVisit: '' })
+            setEditing({ ...emptyCustomer, store: fixedStore || validStoreNames[0], owner: profile?.role === 'beautician' ? profile.name : '' })
           }}>新增顾客</PrimaryButton>
         </div>
       ) : null}
@@ -2318,13 +2326,24 @@ function PerformanceReportsModule({ cashierOrders, customers, stores, role, prof
   const arrivedCustomerKeys = new Set(todayOrders.map(customerKeyOf).filter(Boolean))
   const totalSales = todayOrders.reduce((sum, order) => sum + Number(order.actualAmount || 0), 0)
   const totalArrivals = arrivedCustomerKeys.size
-  const newCustomerKeys = new Set(todayOrders
+  const todayCreatedCustomerKeys = (Array.isArray(customers) ? customers : [])
     .filter((order) => {
-      const customer = customerMap.get(String(order.customerId))
-      return Boolean(customer?.isNewCustomer || customer?.is_new_customer)
+      const store = normalizeStoreName(order.store)
+      const storeMatch = filters.store === '全部门店' || store === filters.store
+      return storeMatch && formatDateOnly(order.createdAt) === today
     })
-    .map(customerKeyOf)
-    .filter(Boolean))
+    .map((customer) => String(customer.id || customer.phone || customer.name))
+    .filter(Boolean)
+  const newCustomerKeys = new Set([
+    ...todayCreatedCustomerKeys,
+    ...todayOrders
+      .filter((order) => {
+        const customer = customerMap.get(String(order.customerId))
+        return Boolean(customer?.isNewCustomer || formatDateOnly(customer?.createdAt) === today)
+      })
+      .map(customerKeyOf)
+      .filter(Boolean),
+  ])
   const totalNewCustomers = newCustomerKeys.size
   const averageOrder = totalArrivals > 0 ? totalSales / totalArrivals : 0
   const todayUpsellAmount = todayOrders.reduce((sum, order) => sum + Number(order.upsellAmount || 0), 0)
@@ -2960,6 +2979,7 @@ function CustomerDrawer({ data, stores, profile, lockedStore, lockedStoreValue, 
             className="w-full rounded-lg border border-pink-100 bg-white px-5 py-4 text-base text-[#5f263c] outline-none focus:border-[#c2185b] focus:ring-2 focus:ring-pink-100"
           />
         </Field>
+        <Field label="是否新客"><Select value={customerForm.isNewCustomer === false ? 'false' : 'true'} onChange={(value) => setCustomerForm({ ...customerForm, isNewCustomer: value === 'true' })} options={[['true', '新客'], ['false', '老客']]} /></Field>
         <Field label="顾客等级"><Select value={customerForm.level} onChange={(value) => setCustomerForm({ ...customerForm, level: value })} options={['', ...levelOptions]} /></Field>
         <Field label="最后到店日期"><Input type="date" value={customerForm.lastVisit} onChange={(value) => setCustomerForm({ ...customerForm, lastVisit: value })} /></Field>
       </FormGrid>
