@@ -437,7 +437,6 @@ export function useCloudData(session) {
         const message = errorMessage(customersError)
         console.error('customers 查询失败:', customersError)
         setCustomerError(message)
-        setError(message)
         setCustomers([])
         return false
       }
@@ -449,7 +448,6 @@ export function useCloudData(session) {
       const message = errorMessage(customersError)
       console.error('customers 查询异常:', customersError)
       setCustomerError(message)
-      setError(message)
       setCustomers([])
       return false
     }
@@ -473,7 +471,6 @@ export function useCloudData(session) {
         const message = errorMessage(followupsError)
         console.error('followups 查询失败:', followupsError)
         setFollowupError(message)
-        setError(message)
         setFollowups([])
         return false
       }
@@ -484,7 +481,6 @@ export function useCloudData(session) {
       const message = errorMessage(followupsError)
       console.error('followups 查询异常:', followupsError)
       setFollowupError(message)
-      setError(message)
       setFollowups([])
       return false
     }
@@ -610,7 +606,6 @@ export function useCloudData(session) {
         const message = errorMessage(dailyReviewsError)
         console.error('daily_reviews 查询失败:', dailyReviewsError)
         setDailyReviewError(message)
-        setError(message)
         setReviews([])
         return false
       }
@@ -621,7 +616,6 @@ export function useCloudData(session) {
       const message = errorMessage(dailyReviewsError)
       console.error('daily_reviews 查询异常:', dailyReviewsError)
       setDailyReviewError(message)
-      setError(message)
       setReviews([])
       return false
     }
@@ -646,7 +640,6 @@ export function useCloudData(session) {
         const message = errorMessage(reportsError)
         console.error('employee_performance_reports 查询失败:', reportsError)
         setPerformanceReportError(message)
-        setError(message)
         setPerformanceReports([])
         return false
       }
@@ -657,7 +650,6 @@ export function useCloudData(session) {
       const message = errorMessage(reportsError)
       console.error('employee_performance_reports 查询异常:', reportsError)
       setPerformanceReportError(message)
-      setError(message)
       setPerformanceReports([])
       return false
     }
@@ -873,7 +865,6 @@ export function useCloudData(session) {
         const message = errorMessage(targetsError)
         console.error('store_targets 查询失败:', targetsError)
         setStoreTargetError(message)
-        setError(message)
         setStoreTargets([])
         return false
       }
@@ -884,7 +875,6 @@ export function useCloudData(session) {
       const message = errorMessage(targetsError)
       console.error('store_targets 查询异常:', targetsError)
       setStoreTargetError(message)
-      setError(message)
       setStoreTargets([])
       return false
     }
@@ -970,24 +960,24 @@ export function useCloudData(session) {
       })
 
       const safeLoaders = [
-        ['customers', () => loadCustomers(activeProfileWithStore, activeStoreRows)],
-        ['followups', () => loadFollowups(activeProfileWithStore)],
-        ['employees', () => loadEmployees(activeProfileWithStore, activeStoreRows)],
-        ['daily_reviews', () => loadDailyReviews(activeProfileWithStore)],
-        ['employee_performance_reports', () => loadPerformanceReports(activeProfileWithStore)],
-        ['performance_records', () => loadPerformanceRecords(activeProfileWithStore)],
-        ['cashier_orders', () => loadCashierOrders(activeProfileWithStore)],
-        ['projects', () => loadProjectCommissions()],
-        ['store_targets', () => loadStoreTargets(activeProfileWithStore)],
+        { name: 'customers', critical: true, loader: () => loadCustomers(activeProfileWithStore, activeStoreRows) },
+        { name: 'followups', critical: true, loader: () => loadFollowups(activeProfileWithStore) },
+        { name: 'employees', critical: true, loader: () => loadEmployees(activeProfileWithStore, activeStoreRows) },
+        { name: 'cashier_orders', critical: true, loader: () => loadCashierOrders(activeProfileWithStore) },
+        { name: 'projects', critical: true, loader: () => loadProjectCommissions() },
+        { name: 'daily_reviews', critical: false, loader: () => loadDailyReviews(activeProfileWithStore) },
+        { name: 'employee_performance_reports', critical: false, loader: () => loadPerformanceReports(activeProfileWithStore) },
+        { name: 'performance_records', critical: false, loader: () => loadPerformanceRecords(activeProfileWithStore) },
+        { name: 'store_targets', critical: false, loader: () => loadStoreTargets(activeProfileWithStore) },
       ]
 
-      for (const [name, loader] of safeLoaders) {
+      for (const { name, critical, loader } of safeLoaders) {
         try {
           const ok = await loader()
-          if (!ok) errors.push(`${name} 读取失败，已使用空数据或本地兜底数据。`)
+          if (!ok && critical) errors.push(`${name} 读取失败，已使用空数据或本地兜底数据。`)
         } catch (loaderError) {
           console.error(`${name} 读取异常:`, loaderError)
-          errors.push(`${name}：${errorMessage(loaderError)}`)
+          if (critical) errors.push(`${name}：${errorMessage(loaderError)}`)
         }
       }
 

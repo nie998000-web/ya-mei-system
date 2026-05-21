@@ -575,8 +575,8 @@ function mergeCloudWithFallback(cloudData, fallbackData, useCloud) {
   })
 
   safe.profile = source?.profile || fallbackData?.profile || { id: 'fallback-boss', name: '老板', role: 'boss', store: defaultStores[0], storeId: 1 }
-  safe.loading = false
-  safe.error = source?.error || (source?.loading ? '正在读取云端真实数据，当前页面先使用安全兜底数据。' : '')
+  safe.loading = Boolean(source?.loading)
+  safe.error = source?.error || ''
 
   return safe
 }
@@ -819,9 +819,9 @@ function AppContent() {
           </div>
         </header>
 
-        {cloud.error && (
+        {cloud.error && !cloud.loading && (
           <div className="mb-5 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
-            云端部分数据读取失败：{cloud.error}
+            云端数据提示：{cloud.error}
             <button onClick={cloud.refresh} className="ml-3 font-bold text-[#c2185b]">重新读取</button>
           </div>
         )}
