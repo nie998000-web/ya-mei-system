@@ -2071,7 +2071,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
         )}
         {customers.length === 0 && <EmptyActionCard title="暂无顾客数据" description="当前账号可见范围内还没有顾客。请先到顾客管理新增顾客，再回到收银台开单。" actionLabel="前往顾客管理" onAction={() => setActive('customers')} />}
         {activeProjectOptions.length === 0 && <EmptyActionCard title="暂无可用项目" description="开单只能选择已启用的项目。请先到项目标准库新增或启用项目。" actionLabel="前往项目标准库" onAction={() => setActive('projectCommissions')} />}
-        {activeEmployeeOptions.length === 0 && <EmptyActionCard title="暂无可用员工" description="操作老师和开单人来自员工管理。请先添加店长、顾问、美容师或前台。" actionLabel="前往员工管理" onAction={() => setActive('employees')} />}
+        {activeEmployeeOptions.length === 0 && <EmptyActionCard title="暂无可用员工" description="操作老师和开单人来自员工管理。请先添加店长、顾问、美容师、技术老师或前台。" actionLabel="前往员工管理" onAction={() => setActive('employees')} />}
         <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-8">
           <MetricBox label="今日实收" value={money(todayOrders.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0))} />
           <MetricBox label="今日消耗" value={money(todayOrders.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0))} />
@@ -3134,7 +3134,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
     .filter((item) => roles.includes(normalizeStaffRole(item.role)))
     .map((item) => [item.id, staffOptionLabel(item)])
   const serviceEmployeeOptions = staffOptionsByRoles(['beautician', 'manager', 'consultant', 'technical_teacher'])
-  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'front_desk'])
+  const salesEmployeeOptions = staffOptionsByRoles(['manager', 'consultant', 'beautician', 'technical_teacher', 'front_desk', 'director', 'admin', 'regional_manager'])
   const consultantOptions = staffOptionsByRoles(['consultant', 'manager'])
   const normalizedCustomerSearch = String(customerSearch || '').trim().toLowerCase()
   const storeCustomers = customers
@@ -3410,7 +3410,7 @@ function CashierDrawer({ data, customers, employees, projects, stores, storeReco
         <div className="mb-3 font-bold text-[#641631]">人员与收款</div>
         <FormGrid>
           <Field label="操作老师"><Select value={form.serviceEmployeeId} onChange={(value) => chooseEmployee('serviceEmployeeId', 'serviceEmployeeName', value)} options={serviceEmployeeOptions.length ? [['', '请选择操作老师'], ...serviceEmployeeOptions] : [['', '暂无可选操作人员，请先到员工管理添加美容师/店长/顾问/技术人员']]} /></Field>
-          <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={salesEmployeeOptions.length ? [['', '请选择开单人'], ...salesEmployeeOptions] : [['', '暂无可选开单人员，请先到员工管理添加店长/顾问/总监/管理员/区域经理']]} /></Field>
+          <Field label="开单人"><Select value={form.salesEmployeeId} onChange={(value) => chooseEmployee('salesEmployeeId', 'salesEmployeeName', value)} options={salesEmployeeOptions.length ? [['', '请选择开单人'], ...salesEmployeeOptions] : [['', '暂无可选开单人员，请先到员工管理添加店长/顾问/美容师/技术老师/前台']]} /></Field>
           <Field label="顾问"><Select value={form.consultantId} onChange={(value) => chooseEmployee('consultantId', 'consultantName', value)} options={[['', '无顾问'], ...consultantOptions]} /></Field>
           <Field label="收款方式"><Select value={form.paymentType} onChange={(value) => setForm({ ...form, paymentType: value })} options={paymentOptions} /></Field>
           <Field label="业绩类型"><Select value={form.performanceType} onChange={(value) => setForm({ ...form, performanceType: value })} options={performanceTypeOptions} /></Field>
