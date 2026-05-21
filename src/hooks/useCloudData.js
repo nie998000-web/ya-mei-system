@@ -760,7 +760,7 @@ export function useCloudData(session) {
           projectName: orderItems.length > 1 ? orderItems.map((item) => item.projectName).filter(Boolean).join(' + ') : order.projectName,
           actualAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.actualAmount || 0), 0) : order.actualAmount,
           consumeAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : order.consumeAmount,
-          manualCommissionAmount: 0,
+          manualCommissionAmount: orderItems.length ? orderItems.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0) : order.manualCommissionAmount,
         }
       }))
       return true
@@ -1280,7 +1280,9 @@ export function useCloudData(session) {
           .from('cashier_order_items')
           .insert(safeItemPayloads))
       }
-      if (insertItemsError) throw new Error(errorMessage(insertItemsError))
+      if (insertItemsError) {
+        console.error('cashier_order_items 明细保存失败，主订单已保存，手工费按主订单汇总继续结算:', insertItemsError)
+      }
     }
     if (data) {
       const mapped = fromCashierOrder(data)

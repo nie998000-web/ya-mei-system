@@ -223,8 +223,21 @@ function remarkWithPerformanceType(type, remark) {
   return `业绩类型：${type || '售前'}${cleanRemark ? `｜${cleanRemark}` : ''}`
 }
 
-function orderManualAmount(order) {
-  return cashierOrderItems(order).reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0)
+function orderManualAmount(order, projectCommissions = []) {
+  const projectById = new Map((Array.isArray(projectCommissions) ? projectCommissions : []).map((project) => [String(project.id), project]))
+  const projectByName = new Map((Array.isArray(projectCommissions) ? projectCommissions : []).map((project) => [String(project.projectName || '').trim(), project]))
+  return cashierOrderItems(order).reduce((sum, item) => {
+    const quantity = Number(item.quantity || 1)
+    const savedManualAmount = Number(item.manualCommissionAmount || 0)
+    if (savedManualAmount > 0) return sum + savedManualAmount
+
+    const itemManual = Number(item.manualCommission || 0)
+    if (itemManual > 0) return sum + itemManual * quantity
+
+    const project = projectById.get(String(item.projectId)) || projectByName.get(String(item.projectName || '').trim())
+    if (!project || project.includeManualCommission === false) return sum
+    return sum + Number(project.manualCommission || 0) * quantity
+  }, 0)
 }
 
 function normalizeActivationStatus(value) {
@@ -1951,7 +1964,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
     const sign = type === '退款' ? -1 : 1
     todayByType[type] = Number(todayByType[type] || 0) + sign * Number(order.actualAmount || 0)
   })
-  const todayManualAmount = todayOrders.reduce((sum, item) => sum + orderManualAmount(item), 0)
+  const todayManualAmount = todayOrders.reduce((sum, item) => sum + orderManualAmount(item, standardProjects), 0)
   const showToast = (message) => {
     setToast(message)
     window.setTimeout(() => setToast(''), 2200)
@@ -2079,7 +2092,7 @@ function CashierModule({ cashierOrders, customers, employees, projectCommissions
                 <Td>{orderPerformanceType(item)}</Td>
                 <Td>{item.serviceEmployeeName}</Td>
                 <Td>{item.salesEmployeeName}</Td>
-                <Td>{money(orderManualAmount(item))}</Td>
+                <Td>{money(orderManualAmount(item, standardProjects))}</Td>
                 <Td>
                   <ActionButton onClick={() => setDetail(item)}>查看详情</ActionButton>
                   <ActionButton onClick={() => setEditing(item)}>编辑</ActionButton>
@@ -2602,7 +2615,7 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
   )
 }
 
-function HandworkSettlementModule({ cashierOrders, stores, role, profile, cashierOrderError }) {
+function HandworkSettlementModule({ cashierOrders, projectCommissions, stores, role, profile, cashierOrderError }) {
   const canChooseStore = isBossRole(role)
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
   const [filters, setFilters] = useState({
@@ -2621,7 +2634,7 @@ function HandworkSettlementModule({ cashierOrders, stores, role, profile, cashie
     const key = `${store}-${name}`
     map[key] = map[key] || { name, store, orders: 0, manualAmount: 0, consumeAmount: 0, salesAmount: 0 }
     map[key].orders += 1
-    map[key].manualAmount += orderManualAmount(order)
+    map[key].manualAmount += orderManualAmount(order, projectCommissions)
     map[key].consumeAmount += Number(order.consumeAmount || 0)
     map[key].salesAmount += Number(order.actualAmount || 0)
     return map

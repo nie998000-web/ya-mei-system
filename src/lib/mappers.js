@@ -427,6 +427,9 @@ export function toCashierOrder(row, profile) {
       ? Math.max(originalAmount - discountAmount, 0)
       : Number(row.actualAmount || 0)
   const consumeAmount = items.length ? items.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0) : Number(row.consumeAmount || 0)
+  const manualCommissionAmount = items.length
+    ? items.reduce((sum, item) => sum + Number(item.manualCommissionAmount ?? (Number(item.manualCommission || 0) * Number(item.quantity || 1))), 0)
+    : Number(row.manualCommissionAmount || 0)
   return {
     order_no: row.orderNo || '',
     date,
@@ -451,7 +454,7 @@ export function toCashierOrder(row, profile) {
     sales_employee_name: row.salesEmployeeName || '',
     consultant_id: dbIdOrNull(row.consultantId),
     consultant_name: row.consultantName || '',
-    manual_commission_amount: 0,
+    manual_commission_amount: manualCommissionAmount,
     remark: row.remark || '',
     status: row.status || 'active',
     updated_at: new Date().toISOString(),
@@ -496,6 +499,9 @@ export function toCashierOrderItem(item, orderId) {
 }
 
 export function cashierOrderToPerformanceRecord(order) {
+  const manualCommissionAmount = Array.isArray(order.orderItems) && order.orderItems.length
+    ? order.orderItems.reduce((sum, item) => sum + Number(item.manualCommissionAmount || 0), 0)
+    : Number(order.manualCommissionAmount || 0)
   return {
     id: order.id,
     date: order.date,
@@ -517,7 +523,7 @@ export function cashierOrderToPerformanceRecord(order) {
     consultantId: order.consultantId,
     consultantName: order.consultantName,
     quantity: Number(order.quantity || 1),
-    manualCommissionAmount: 0,
+    manualCommissionAmount,
     remark: order.remark || '',
     status: order.status || 'active',
     createdAt: order.createdAt,
