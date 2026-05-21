@@ -16,6 +16,7 @@ import {
   fromReview,
   fromStoreTarget,
   isDbId,
+  isUuid,
   normalizeStoreName,
   toEmployee,
   toCashierOrder,
@@ -318,6 +319,29 @@ function isMissingColumnError(error, columnName) {
 function isStoreIdCompatibilityError(error) {
   const message = String(error?.message || error?.details || error?.hint || '').toLowerCase()
   return message.includes('store_id') && /(uuid|bigint|operator does not exist|invalid input syntax|cannot cast|foreign key|constraint)/.test(message)
+}
+
+function isInvalidUuidPayloadError(error) {
+  return /invalid input syntax for type uuid/i.test(errorMessage(error))
+}
+
+function withoutNonUuidForeignIds(payload) {
+  const next = { ...(payload || {}) }
+  ;[
+    'store_id',
+    'customer_id',
+    'project_id',
+    'service_employee_id',
+    'sales_employee_id',
+    'consultant_id',
+    'operator_id',
+    'cashier_id',
+    'employee_id',
+    'created_by',
+  ].forEach((field) => {
+    if (next[field] != null && next[field] !== '' && !isUuid(next[field])) delete next[field]
+  })
+  return next
 }
 
 function withoutStoreId(payload) {
@@ -1221,18 +1245,20 @@ export function useCloudData(session) {
         .maybeSingle()
       if (!storeError && isDbId(storeRow?.id)) payload.store_id = storeRow.id
     }
-    if (!payload.store_id) {
-      throw new Error('请选择正确的顾客、门店、项目、操作老师和开单人')
-    }
     if (isBeauticianRole(profile?.role)) {
       payload.service_employee_name = profile.name
       payload.sales_employee_name = profile.name
     }
     console.log('cashier submit payload', payload)
-    const request = row.id && isDbId(row.id)
-      ? supabase.from('cashier_orders').update(payload).eq('id', row.id).select(cashierOrderSelectFields).single()
-      : supabase.from('cashier_orders').insert(payload).select(cashierOrderSelectFields).single()
-    const { data, error: saveError } = await request
+    const saveOrder = async (nextPayload) => (row.id && isDbId(row.id)
+      ? supabase.from('cashier_orders').update(nextPayload).eq('id', row.id).select(cashierOrderSelectFields).single()
+      : supabase.from('cashier_orders').insert(nextPayload).select(cashierOrderSelectFields).single())
+    let { data, error: saveError } = await saveOrder(payload)
+    if (saveError && isInvalidUuidPayloadError(saveError)) {
+      const safePayload = withoutNonUuidForeignIds(payload)
+      console.warn('cashier_orders 存在 uuid 外键字段，但当前基础数据仍是数字 ID，已自动改用文本快照保存。', { payload, safePayload, saveError })
+      ;({ data, error: saveError } = await saveOrder(safePayload))
+    }
     if (saveError) throw new Error(errorMessage(saveError))
     const orderItems = Array.isArray(row.orderItems) && row.orderItems.length ? row.orderItems : []
     if (data?.id && isDbId(data.id) && orderItems.length > 0) {
@@ -1243,9 +1269,17 @@ export function useCloudData(session) {
         .delete()
         .eq('order_id', data.id)
       if (deleteItemsError) throw new Error(errorMessage(deleteItemsError))
-      const { error: insertItemsError } = await supabase
+      const itemPayloads = orderItems.map((item) => toCashierOrderItem(item, data.id))
+      let { error: insertItemsError } = await supabase
         .from('cashier_order_items')
-        .insert(orderItems.map((item) => toCashierOrderItem(item, data.id)))
+        .insert(itemPayloads)
+      if (insertItemsError && isInvalidUuidPayloadError(insertItemsError)) {
+        const safeItemPayloads = itemPayloads.map(withoutNonUuidForeignIds)
+        console.warn('cashier_order_items 存在 uuid 外键字段，但当前项目基础数据仍是数字 ID，已自动改用项目文本快照保存。', { itemPayloads, safeItemPayloads, insertItemsError })
+        ;({ error: insertItemsError } = await supabase
+          .from('cashier_order_items')
+          .insert(safeItemPayloads))
+      }
       if (insertItemsError) throw new Error(errorMessage(insertItemsError))
     }
     if (data) {
