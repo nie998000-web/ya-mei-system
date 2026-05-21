@@ -240,6 +240,23 @@ function orderManualAmount(order, projectCommissions = []) {
   }, 0)
 }
 
+function isCashLikePayment(paymentType) {
+  return ['cash', 'wechat', 'alipay', 'other', '现金', '微信', '支付宝', '其他'].includes(String(paymentType || '').trim())
+}
+
+function recordCustomerKey(record) {
+  return String(record?.customerId || record?.customerPhone || record?.customerName || record?.id || '')
+}
+
+function uniqueRecords(records) {
+  const map = new Map()
+  ;(Array.isArray(records) ? records : []).forEach((record, index) => {
+    const key = String(record?.id || record?.orderNo || `${recordCustomerKey(record)}-${record?.date || ''}-${index}`)
+    if (!map.has(key)) map.set(key, record)
+  })
+  return [...map.values()]
+}
+
 function normalizeActivationStatus(value) {
   const status = String(value || '').trim()
   if (status === '未跟进') return '未联系'
@@ -2467,7 +2484,8 @@ function salaryRecordSource(performanceRecords, performanceReports, cashierOrder
   return activeCashierOrders
 }
 
-function buildMonthlySalaryRows({ employees, records, month, store, employee, role }) {
+function buildMonthlySalaryRows({ employees, records, customers, month, store, employee, role }) {
+  const customerById = new Map((Array.isArray(customers) ? customers : []).map((customer) => [String(customer.id), customer]))
   const scopedEmployees = (Array.isArray(employees) ? employees : []).filter((item) => {
     const storeMatch = store === '全部门店' || normalizeStoreName(item.store) === store
     const employeeMatch = employee === '全部员工' || item.name === employee
@@ -2476,18 +2494,30 @@ function buildMonthlySalaryRows({ employees, records, month, store, employee, ro
   })
 
   return scopedEmployees.map((item) => {
-    const employeeRecords = (Array.isArray(records) ? records : []).filter((record) => {
+    const monthRecords = (Array.isArray(records) ? records : []).filter((record) => {
       const recordMonth = String(record.month || record.date || '').slice(0, 7)
+      return recordMonth === month
+    })
+    const employeeRecords = uniqueRecords(monthRecords.filter((record) => {
       const salesName = record.salesEmployeeName || record.employee
       const serviceName = record.serviceEmployeeName || record.employee
-      return recordMonth === month && (salesName === item.name || serviceName === item.name)
-    })
-    const personalPerformanceAmount = employeeRecords
-      .filter((record) => (record.salesEmployeeName || record.employee) === item.name)
+      return salesName === item.name || serviceName === item.name
+    }))
+    const salesRecords = monthRecords.filter((record) => (record.salesEmployeeName || record.employee) === item.name)
+    const serviceRecords = monthRecords.filter((record) => (record.serviceEmployeeName || record.employee) === item.name)
+    const personalPerformanceAmount = salesRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
+    const openingAmount = salesRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
+    const storePerformanceAmount = monthRecords
+      .filter((record) => normalizeStoreName(record.storeName || record.store) === normalizeStoreName(item.store))
       .reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
-    const storePerformanceAmount = (Array.isArray(records) ? records : [])
-      .filter((record) => String(record.month || record.date || '').slice(0, 7) === month && normalizeStoreName(record.storeName || record.store) === normalizeStoreName(item.store))
-      .reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
+    const arrivalKeys = new Set(employeeRecords.map(recordCustomerKey).filter(Boolean))
+    const newCustomerKeys = new Set(employeeRecords
+      .filter((record) => {
+        const customer = customerById.get(String(record.customerId))
+        return Boolean(customer?.isNewCustomer || formatDateOnly(customer?.createdAt) === formatDateOnly(record.date))
+      })
+      .map(recordCustomerKey)
+      .filter(Boolean))
     return {
       employeeId: item.id,
       employeeName: item.name,
@@ -2496,19 +2526,20 @@ function buildMonthlySalaryRows({ employees, records, month, store, employee, ro
       month,
       personalPerformanceAmount,
       storePerformanceAmount,
-      arrivals: employeeRecords.reduce((sum, record) => sum + Number(record.arrivals || 0), 0),
-      newCustomers: employeeRecords.reduce((sum, record) => sum + Number(record.newCustomers || 0), 0),
+      arrivals: arrivalKeys.size,
+      newCustomers: newCustomerKeys.size,
       consumeAmount: employeeRecords.reduce((sum, record) => sum + Number(record.consumeAmount ?? record.consumeSales ?? 0), 0),
-      serviceSales: employeeRecords.reduce((sum, record) => sum + Number(record.serviceSales || 0), 0),
-      cashSales: employeeRecords.reduce((sum, record) => sum + Number(record.cashSales || 0), 0),
-      upsellAmount: employeeRecords.reduce((sum, record) => sum + Number(record.upsellAmount || 0), 0),
+      serviceSales: serviceRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0),
+      cashSales: salesRecords.filter((record) => isCashLikePayment(record.paymentType)).reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0),
+      openingAmount,
+      upsellAmount: salesRecords.reduce((sum, record) => sum + Number(record.upsellAmount || 0), 0),
       recordCount: employeeRecords.length,
       records: employeeRecords,
     }
   }).sort((a, b) => Number(b.personalPerformanceAmount || 0) - Number(a.personalPerformanceAmount || 0))
 }
 
-function PerformanceMonthlyModule({ performanceReports, performanceRecords, cashierOrders, employees, stores, role, profile, performanceReportError, performanceRecordError, cashierOrderError, setActive }) {
+function PerformanceMonthlyModule({ performanceReports, performanceRecords, cashierOrders, customers, employees, stores, role, profile, performanceReportError, performanceRecordError, cashierOrderError, setActive }) {
   const canChooseStore = isBossRole(role)
   const isBeautician = isBeauticianRole(role)
   const fixedStore = canChooseStore ? '' : normalizeStoreName(profile?.store) || stores[0] || defaultStores[0]
@@ -2523,13 +2554,13 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
   const sourceRecords = salaryRecordSource(performanceRecords, performanceReports, cashierOrders)
   const scopedEmployees = sourceEmployees.filter((item) => (filters.store === '全部门店' || normalizeStoreName(item.store) === filters.store) && (!isBeautician || item.name === profile?.name))
   const employeeOptions = isBeautician ? [profile?.name || ''] : ['全部员工', ...unique(scopedEmployees.map((item) => item.name).filter(Boolean))]
-  const monthlyRows = buildMonthlySalaryRows({ employees: sourceEmployees, records: sourceRecords, month: filters.month, store: filters.store, employee: filters.employee, role: filters.role })
+  const monthlyRows = buildMonthlySalaryRows({ employees: sourceEmployees, records: sourceRecords, customers, month: filters.month, store: filters.store, employee: filters.employee, role: filters.role })
   const monthTotalSales = monthlyRows.reduce((sum, item) => sum + Number(item.personalPerformanceAmount || 0), 0)
   const monthArrivals = monthlyRows.reduce((sum, item) => sum + Number(item.arrivals || 0), 0)
   const monthNewCustomers = monthlyRows.reduce((sum, item) => sum + Number(item.newCustomers || 0), 0)
   const monthConsumeAmount = monthlyRows.reduce((sum, item) => sum + Number(item.consumeAmount || 0), 0)
   const monthCashAmount = monthlyRows.reduce((sum, item) => sum + Number(item.cashSales || 0), 0)
-  const monthUpsellAmount = monthlyRows.reduce((sum, item) => sum + Number(item.upsellAmount || 0), 0)
+  const monthOpeningAmount = monthlyRows.reduce((sum, item) => sum + Number(item.openingAmount || 0), 0)
   const monthUnitPrice = monthArrivals > 0 ? monthTotalSales / monthArrivals : 0
   const storeRank = validStoreNames
     .map((store) => {
@@ -2577,8 +2608,8 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
             <div className="mt-2 text-3xl font-black text-orange-600">{money(monthCashAmount)}</div>
           </div>
           <div className="rounded-lg border border-pink-100 bg-pink-50 p-4">
-            <div className="text-sm text-[#9a6078]">本月升单金额</div>
-            <div className="mt-2 text-3xl font-black text-green-700">{money(monthUpsellAmount)}</div>
+            <div className="text-sm text-[#9a6078]">本月开单金额</div>
+            <div className="mt-2 text-3xl font-black text-green-700">{money(monthOpeningAmount)}</div>
           </div>
         </div>
         <div className="mb-4 grid grid-cols-1 gap-3 rounded-lg bg-white p-4 ring-1 ring-pink-100 md:grid-cols-4">
@@ -2590,7 +2621,7 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
         <Table>
           <thead>
             <tr>
-              {['排名', '月份', '门店', '员工', '岗位', '到店人数', '总业绩', '消耗金额', '现金金额', '升单金额', '客单价', '操作'].map((head) => <Th key={head}>{head}</Th>)}
+              {['排名', '月份', '门店', '员工', '岗位', '到店人数', '总业绩', '消耗金额', '现金金额', '开单金额', '客单价', '操作'].map((head) => <Th key={head}>{head}</Th>)}
             </tr>
           </thead>
           <tbody>
@@ -2610,7 +2641,7 @@ function PerformanceMonthlyModule({ performanceReports, performanceRecords, cash
                 <Td><b className="text-[#bd1657]">{money(item.personalPerformanceAmount)}</b></Td>
                 <Td>{money(item.consumeAmount)}</Td>
                 <Td>{money(item.cashSales)}</Td>
-                <Td>{money(item.upsellAmount)}</Td>
+                <Td>{money(item.openingAmount)}</Td>
                 <Td>{money(item.arrivals > 0 ? item.personalPerformanceAmount / item.arrivals : 0)}</Td>
                 <Td><Badge tone={item.recordCount > 0 ? 'success' : 'light'}>{item.recordCount > 0 ? '有记录' : '暂无'}</Badge></Td>
               </tr>
