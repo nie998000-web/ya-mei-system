@@ -2507,10 +2507,14 @@ function buildMonthlySalaryRows({ employees, records, customers, month, store, e
     const serviceRecords = monthRecords.filter((record) => (record.serviceEmployeeName || record.employee) === item.name)
     const personalPerformanceAmount = salesRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
     const openingAmount = salesRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
+    const cashSales = salesRecords
+      .filter((record) => !record.paymentType || isCashLikePayment(record.paymentType))
+      .reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
     const storePerformanceAmount = monthRecords
       .filter((record) => normalizeStoreName(record.storeName || record.store) === normalizeStoreName(item.store))
       .reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0)
     const arrivalKeys = new Set(employeeRecords.map(recordCustomerKey).filter(Boolean))
+    const arrivals = arrivalKeys.size || employeeRecords.length
     const newCustomerKeys = new Set(employeeRecords
       .filter((record) => {
         const customer = customerById.get(String(record.customerId))
@@ -2526,12 +2530,12 @@ function buildMonthlySalaryRows({ employees, records, customers, month, store, e
       month,
       personalPerformanceAmount,
       storePerformanceAmount,
-      arrivals: arrivalKeys.size,
+      arrivals,
       newCustomers: newCustomerKeys.size,
       consumeAmount: employeeRecords.reduce((sum, record) => sum + Number(record.consumeAmount ?? record.consumeSales ?? 0), 0),
       serviceSales: serviceRecords.reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0),
-      cashSales: salesRecords.filter((record) => isCashLikePayment(record.paymentType)).reduce((sum, record) => sum + Number(record.amount ?? record.totalSales ?? 0), 0),
-      openingAmount,
+      cashSales,
+      openingAmount: openingAmount || personalPerformanceAmount,
       upsellAmount: salesRecords.reduce((sum, record) => sum + Number(record.upsellAmount || 0), 0),
       recordCount: employeeRecords.length,
       records: employeeRecords,
