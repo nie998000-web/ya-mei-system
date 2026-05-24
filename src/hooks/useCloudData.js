@@ -1356,16 +1356,25 @@ export function useCloudData(session) {
   }
 
   const saveEmployee = async (row) => {
+    setEmployeeError('')
     const storeName = writeStoreForProfile(row.store, profile)
     const employeePayload = {
       ...toEmployee({ ...row, storeId: storeIdByNameFromRows(storeRecords, storeName) || row.storeId }, profile),
       store_id: storeIdByNameFromRows(storeRecords, storeName) || row.storeId || profile?.storeId || null,
       store: storeName,
     }
-    const { data, error: saveError } = row.id
-      ? await supabase.from('employees').update(employeePayload).eq('id', row.id).select(employeeSelectFields).single()
-      : await supabase.from('employees').insert(employeePayload).select(employeeSelectFields).single()
+
+    const saveRequest = (payload, selectFields = employeeSelectFields) => row.id
+      ? supabase.from('employees').update(payload).eq('id', row.id).select(selectFields).single()
+      : supabase.from('employees').insert(payload).select(selectFields).single()
+
+    let { data, error: saveError } = await saveRequest(employeePayload)
+    if (saveError && (isMissingColumnError(saveError, 'store_id') || isStoreIdCompatibilityError(saveError))) {
+      console.warn('employees.store_id 不存在或类型不兼容，员工保存已自动改用 employees.store。', saveError)
+      ;({ data, error: saveError } = await saveRequest(withoutStoreId(employeePayload), employeeLegacySelectFields))
+    }
     if (saveError) throw new Error(errorMessage(saveError))
+
     const statPayload = {
       date: todayString(),
       employee_id: data.id,
@@ -1384,7 +1393,10 @@ export function useCloudData(session) {
     const { error: statsSaveError } = await supabase
       .from('employee_daily_stats')
       .upsert(statPayload, { onConflict: 'date,employee_id' })
-    if (statsSaveError) throw new Error(errorMessage(statsSaveError))
+    if (statsSaveError) {
+      console.error('employee_daily_stats 保存失败，员工基础资料已保存:', statsSaveError)
+      setEmployeeError(errorMessage(statsSaveError))
+    }
     await loadEmployees(profile)
   }
 
