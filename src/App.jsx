@@ -1741,7 +1741,7 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                     ))}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[150px_160px_190px_1fr] md:items-start">
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3 md:items-start">
                     <label>
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进方式</span>
                       <Select value={draft.method} onChange={(value) => updateDraft(item.id, { method: value })} options={followMethods} />
@@ -1754,11 +1754,15 @@ function ActivationModule({ customers, employees, followups, stores, profile, ro
                       <span className="mb-2 block text-sm font-semibold text-[#79445b]">下次跟进日期</span>
                       <Input type="date" value={draft.nextFollowTime} onChange={(value) => updateDraft(item.id, { nextFollowTime: value })} />
                     </label>
-                    <label>
-                      <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进内容备注</span>
-                      <Textarea value={draft.followNote} onChange={(value) => updateDraft(item.id, { followNote: value })} />
-                    </label>
                   </div>
+                  <label className="mt-3 block">
+                    <span className="mb-2 block text-sm font-semibold text-[#79445b]">跟进内容备注</span>
+                    <Textarea
+                      value={draft.followNote}
+                      onChange={(value) => updateDraft(item.id, { followNote: value })}
+                      className="min-h-[96px] w-full"
+                    />
+                  </label>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <PrimaryButton onClick={() => saveActivationFollowup(item)}>新增跟进</PrimaryButton>
                     {latestFollowup ? (
